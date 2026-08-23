@@ -82,9 +82,10 @@ dispatch(
 
 - `~/.dsh/subagent-profiles.json` —— 方案注册表（由设置页编辑）。
 - `~/.dsh/subagent-profiles.state.json` —— 插件的启用/禁用开关（默认启用）。
+- `~/.dsh/subagent-profiles.failed-traces.json` —— 失败台账（派发失败轨迹）。
 - `~/.dsh/.agent-presets/orchestrator/` —— 自动安装的 `orchestrator` 编排者预设（每次启动由打包的 `presets/orchestrator/` 同步）。
 
-尊重 `DSH_HOME`，默认 `~/.dsh`。
+尊重 `DSH_HOME`，默认 `~/.dsh`。卸载插件会删除上述三个数据文件与自动安装的 `orchestrator` 预设目录（其它插件的预设不受影响）；重新安装或重新启动会重新同步预设并重新生成数据文件。
 
 ## 已知限制
 

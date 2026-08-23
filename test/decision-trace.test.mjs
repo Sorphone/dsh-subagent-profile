@@ -340,7 +340,7 @@ test('execute 前台 completed：结果含 decisionTrace，四闸齐全 + settle
     const trace = out.decisionTrace;
     assert.ok(trace, '结果必须携带 decisionTrace');
     assert.equal(trace.version, 1);
-    assert.deepEqual(trace.gates.map((g) => g.name), ['whitelist', 'cost', 'intersection', 'approval'], '四闸齐全且顺序稳定');
+    assert.deepEqual(trace.gates.map((g) => g.name), ['whitelist', 'cost', 'intersection', 'approval', 'budget'], '五闸齐全且顺序稳定（budget 通过也记闸）');
     assert.ok(trace.gates.every((g) => typeof g.verdict === 'string'), '每闸必有 verdict');
     assert.equal(trace.execution.kind, 'foreground', 'execution.kind=foreground');
     assert.equal(trace.execution.mode, 'one-shot', 'execution.mode=one-shot');
@@ -369,7 +369,7 @@ test('execute continuable：结果含 trace、ignored 与 effective 一致、无
     assert.deepEqual(out.ignored, ['preset', 'reasoningEffort']);
     assert.deepEqual(trace.effective.ignored, out.ignored, 'ignored 与 trace.effective.ignored 一致');
     assert.equal(trace.effective.preset, 'inherit', 'continuable 生效 preset 为 inherit');
-    assert.deepEqual(trace.gates.map((g) => g.name), ['whitelist', 'cost', 'intersection', 'approval'], 'continuable 闸序与前台一致');
+    assert.deepEqual(trace.gates.map((g) => g.name), ['whitelist', 'cost', 'intersection', 'approval'], 'continuable 闸序与前台一致（budget 不占并发不记闸）');
     assert.equal(trace.execution.kind, 'continuable');
     assert.equal(trace.execution.mode, 'continuable');
     assert.equal(trace.execution.parentSessionId, 'parent-cont');

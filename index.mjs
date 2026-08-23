@@ -2,17 +2,20 @@
 // 源自原型动态插件 `code.host` 主体；宿主导入面（registerTool/defineTool/
 // handle）收敛在 lib/core/shims.mjs，装配块按模块拆分驻留 lib/core/（catalog /
 // presets-sync / profiles-store / cost-guard / whitelist / intersection /
-// delegation / pure / shims / http-routes / profile-provider / dispatch-tool）。
+// delegation / pure / shims / http-routes / profile-provider / dispatch-tool /
+// dispatch-guard）。
 // apply 的装配辅助函数（syncBundledPresetsToHome / provideProfileService /
 // registerSystemPromptSections / registerSettingsRoutes）保持 section 文本与
 // 门控逐字不变；`enabled` 始终经 getter 注入，门控读取当前值。
 
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { syncBundledPresets } from './lib/core/presets-sync.mjs';
 import { dshHome, createProfileStore } from './lib/core/profiles-store.mjs';
 import { createHttpRoutes } from './lib/core/http-routes.mjs';
 import { createProfileProvider } from './lib/core/profile-provider.mjs';
 import { createDispatchTool } from './lib/core/dispatch-tool.mjs';
+import { createDispatchGuard } from './lib/core/dispatch-guard.mjs';
 import { createCatalogCache } from './lib/core/catalog-cache.mjs';
 import { createFailureLedger } from './lib/core/decision-trace.mjs';
 import { tierSortKey } from './lib/core/pure.mjs';
@@ -35,6 +38,39 @@ function syncBundledPresetsToHome(ctx) {
   } catch (error) {
     ctx.logger.warn('[dsh-subagent-profile] preset sync failed:', error instanceof Error ? error.message : String(error));
   }
+}
+
+// 卸载清理：删除本插件持久化的 3 个数据文件 + 自装的 orchestrator 预设目录（只删
+// 本插件拥有的 orchestrator 目录，不碰 .agent-presets 下其它插件/用户的目录）。复活
+// 口径：重新安装/启动插件会经 syncBundledPresetsToHome 重新同步预设，数据文件重新
+// 生成。fail-soft：删失败不抛（卸载不应因清理失败而阻断）。
+function removeOwnedData(home) {
+  for (const file of ['subagent-profiles.json', 'subagent-profiles.state.json', 'subagent-profiles.failed-traces.json']) {
+    try { rmSync(join(home, file), { force: true }); } catch { /* best effort */ }
+  }
+  try { rmSync(join(home, '.agent-presets', 'orchestrator'), { recursive: true, force: true }); } catch { /* best effort */ }
+}
+
+// 卸载接线：注销 dispatch 工具（若仍注册）+ 清空失败台账 + 级联取消在途派发 +
+// 清空守卫记账 + 删本插件数据文件与自装预设目录。另挂钩宿主 agent/disposed
+// （Agent 注册 fiber 卸载时发射）：父会话逻辑结束时按父释放并发/token 记账，
+// 防配额随会话累积驻留。
+function registerTeardown(ctx, dispatch, ledger, guard, home) {
+  ctx.effect(() => dispatch.dispose);
+  ctx.effect(() => ledger.clear);
+  ctx.effect(() => () => {
+    guard.cancelAll();
+    guard.reset();
+    removeOwnedData(home);
+  });
+  const onAgentDisposed = ({ agent }) => {
+    const parentSessionId = agent?.session?.header?.id;
+    if (parentSessionId !== undefined && parentSessionId !== null && parentSessionId !== '') {
+      guard.resetParent(parentSessionId);
+    }
+  };
+  ctx.on('agent/disposed', onAgentDisposed);
+  ctx.effect(() => () => ctx.off('agent/disposed', onAgentDisposed));
 }
 
 // subagent-profiles service over the store's per-apply profiles Map —
@@ -173,25 +209,22 @@ function createSharedCatalog(ctx) {
 }
 
 export async function apply(ctx) {
-  // Enable/disable switch (default on, runtime-toggled by the settings
-  // page, persisted across restarts) + profile registry — lib/profiles-store
-  // .mjs: createProfileStore. loadProfiles runs once at startup via the
-  // explicit call below (the factory itself does not auto-load).
-  const store = createProfileStore({ dshHome: dshHome(), logger: ctx.logger });
+  // Enable/disable switch (default on, runtime-toggled by the settings page) +
+  // profile registry — lib/profiles-store.mjs: createProfileStore. loadProfiles
+  // runs once at startup via the explicit call below (the factory does not auto-load).
+  const home = dshHome();
+  const store = createProfileStore({ dshHome: home, logger: ctx.logger });
   let enabled = store.loadEnabled();
   store.loadProfiles();
   // Self-install the bundled "orchestrator" preset (idempotent, fail-soft).
   syncBundledPresetsToHome(ctx);
   // 进程级共享 catalog 快照（/options 三路由 + dispatch cost guard 共用）。
   const catalog = createSharedCatalog(ctx);
-  // 失败台账：dispatch 失败路径记账 + /ledger/failures 路由读取；stateFile 落盘
-  // JSON（构造加载、record/take 后同步原子写回）。同进程共享同一实例。
-  const ledger = createFailureLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`), stateFile: join(dshHome(), 'subagent-profiles.failed-traces.json') });
-  // `dispatch` tool — lib/core/dispatch-tool.mjs: defineTool block (schema +
-  // execute), the result-schema consistency lock and the syncTool
-  // register/unregister logic.
-  // Created BEFORE the HTTP inject so createHttpRoutes can capture
-  // dispatch.syncTool (/set-enabled).
+  // 失败台账（stateFile 落盘 JSON，同进程共享同一实例）+ 总预算守卫（并发/token/在途）。
+  const ledger = createFailureLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`), stateFile: join(home, 'subagent-profiles.failed-traces.json') });
+  const guard = createDispatchGuard({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
+  // `dispatch` tool（defineTool schema + execute + syncTool 注册/注销）。Created
+  // BEFORE the HTTP inject so createHttpRoutes can capture dispatch.syncTool.
   const dispatch = createDispatchTool({
     register: (tool) => ctx.tools.register(tool),
     store,
@@ -201,13 +234,13 @@ export async function apply(ctx) {
     subagents: ctx.subagents,
     catalog,
     ledger,
+    guard,
   });
   // subagent-profiles service over the store's per-apply profiles Map.
   provideProfileService(ctx, store);
   // Gated system-prompt sections (profile directory + orchestrator mode).
   registerSystemPromptSections(ctx, store, () => enabled);
-  // `profile` subagent provider — lib/core/profile-provider.mjs:
-  // createProfileProvider registers the provider and returns the disposer.
+  // `profile` subagent provider（createProfileProvider registers + returns disposer）。
   const disposeProvider = createProfileProvider({
     subagents: ctx.subagents,
     store,
@@ -218,7 +251,5 @@ export async function apply(ctx) {
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
   // HTTP loopback routes for the Client settings UI — lib/core/http-routes.mjs.
   registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger);
-  // Teardown: unregister the dispatch tool (if still registered) + 清空失败台账。
-  ctx.effect(() => dispatch.dispose);
-  ctx.effect(() => ledger.clear);
+  registerTeardown(ctx, dispatch, ledger, guard, home);
 }

@@ -82,9 +82,10 @@ Delegation never lets a subagent gain more power than you already have — this 
 
 - `~/.dsh/subagent-profiles.json` — the profile registry (edited from the settings page).
 - `~/.dsh/subagent-profiles.state.json` — the plugin's enable/disable switch (default enabled).
+- `~/.dsh/subagent-profiles.failed-traces.json` — the failure ledger (dispatch failure traces).
 - `~/.dsh/.agent-presets/orchestrator/` — the self-installed `orchestrator` agent preset (synced from the bundled `presets/orchestrator/` on every startup).
 
-`DSH_HOME` is respected and defaults to `~/.dsh`.
+`DSH_HOME` is respected and defaults to `~/.dsh`. Uninstalling the plugin removes the three data files above and the self-installed `orchestrator` preset directory (other plugins' presets are left untouched); re-installing or re-launching re-syncs the preset and regenerates the data files.
 
 ## Known limitations
 
