@@ -139,7 +139,7 @@ test('装配：DSH_HOME 隔离下 dispatch 失败落盘到 <home>/subagent-profi
     const parent = { ctx: { get: () => undefined }, options: {}, session: { header: { id: 'sess-persist' } } };
     await assert.rejects(
       () => tool.execute({ prompt: 'task', preset: 'nonexistent' }, { agent: parent, signal: undefined }),
-      /not in the target-preset whitelist/
+      /不在 system-trust 白名单/
     );
     const file = join(iso.dir, 'subagent-profiles.failed-traces.json');
     assert.ok(existsSync(file), '失败台账必须落盘到隔离 DSH_HOME 内');

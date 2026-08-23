@@ -430,7 +430,7 @@ test('execute 失败路径：非法 preset 原错误文案不变 + 台账出现 
     await assert.rejects(
       () => tool.execute({ prompt: 'task', preset: 'nonexistent' }, { agent: parent, signal: undefined }),
       (err) => {
-        assert.match(err.message, /dispatch: preset "nonexistent" is not in the target-preset whitelist/);
+        assert.match(err.message, /dispatch: 预设 "nonexistent" 不在 system-trust 白名单/);
         return true;
       }
     );
@@ -444,7 +444,7 @@ test('execute 失败路径：非法 preset 原错误文案不变 + 台账出现 
     assert.ok(gate, 'fail 闸必须存在');
     assert.equal(gate.verdict, 'fail');
     assert.equal(gate.input.requestedPreset, 'nonexistent', 'fail 闸 input 完整');
-    assert.ok(gate.reason.includes('not in the target-preset whitelist'), 'fail 闸 reason 完整');
+    assert.ok(gate.reason.includes('不在 system-trust 白名单'), 'fail 闸 reason 完整');
   } finally { iso.restore(); iso.teardown(); }
 });
 
@@ -503,7 +503,7 @@ test('execute HTTP 路由：GET /ledger/failures 返回台账内容，未知 ses
     const parent = { ctx: { get: () => undefined }, options: {}, session: { header: { id: 'sess-x' } } };
     await assert.rejects(
       () => tool.execute({ prompt: 'task', preset: 'nope' }, { agent: parent, signal: undefined }),
-      /not in the target-preset whitelist/
+      /不在 system-trust 白名单/
     );
     const handler = routes[0].handler;
     const hit = await callRoute(handler, 'GET', '/subagent-profiles/ledger/failures?session=sess-x');

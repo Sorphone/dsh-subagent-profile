@@ -89,7 +89,7 @@ Delegation never lets a subagent gain more power than you already have — this 
 
 ## Known limitations
 
-- **Background** one-shot dispatch requires `@deepseek-ai/dsh-jobs` and `@deepseek-ai/dsh-tool-jobs` to be loaded; otherwise it fails with "background jobs unavailable".
+- **Background** one-shot dispatch requires `@deepseek-ai/dsh-jobs` and `@deepseek-ai/dsh-tool-jobs` to be loaded; otherwise it fails with "dispatch: 后台派发不可用：缺少 jobs 服务".
 - **Continuable** mode goes through the DSH standard composition path, so the `preset` swap and `reasoningEffort` are ignored (the child inherits the parent preset at the default reasoning effort).
 - **Continuable** tool gate is a plugin-side mitigation: the child's `allow` is pre-computed as a closed set — parent tool set − `run_code` − `deny`, then intersected with `allow`. **Assumption:** continuable inherits the parent preset, so the child's tool set ≈ the parent's. **Failure condition:** any host behavior change that makes the child's tool set differ from the parent's (not only preset swap — e.g. a future preset swap, composing a different tool set) means the parent set can contain tools the child does not have, so `tools.restrict` throws "unknown tool" and this mitigation automatically degrades to fail-loud (conservatively safe); it must then be replaced with a true parent ∩ child intersection once the upstream provides a provider guard seam.
 

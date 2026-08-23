@@ -375,7 +375,7 @@ test('execute 后台 jobs 缺失：并发槽不泄漏（catch 幂等 release，8
     for (let i = 0; i < 8; i += 1) {
       await assert.rejects(
         () => tool.execute({ prompt: 'x', run_in_background: true }, { agent: makeParent(), signal: undefined }),
-        /background jobs unavailable/
+        /后台派发不可用/
       );
     }
     // 8 次失败后槽必须已全部释放：第 9 次派发（同一父会话）应成功。
