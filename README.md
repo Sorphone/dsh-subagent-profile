@@ -4,6 +4,7 @@
 <div align="center">
   <b style="font-size: 1.15em;">Subagent dispatch, profiled — the right agent for the right task (preset / model / reasoning effort)</b><br /><br />
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" />
+  <img alt="Version: v0.2.0" src="https://img.shields.io/badge/Version-v0.2.0-blue.svg" />
   <img alt="npm" src="https://img.shields.io/npm/v/dsh-subagent-profile.svg" />
   <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.0--rc.6%20~%200.1.1--rc.2-blue.svg" />
 </div>
@@ -99,19 +100,25 @@ dsh-subagent-profile/
 ├── index.mjs                     # host side: the plugin itself (dispatch tool, profile provider, service, HTTP routes)
 ├── lib/
 │   ├── client.js                 # browser side: settings page + dispatch tool-call card
-│   ├── pure.mjs                  # dependency-free pure functions (sanitize / prune / guard math — unit-tested)
-│   └── shims.mjs                 # the single @deepseek-ai import facade (guards fail loud, helpers degrade softly)
+│   └── core/                     # host-side modules (lightweight layering)
+│       ├── pure.mjs              # dependency-free pure functions (sanitize / prune / guard math — unit-tested)
+│       ├── shims.mjs             # the single @deepseek-ai import facade (guards fail loud, helpers degrade softly)
+│       └── *.mjs                 # catalog / whitelist / intersection / cost-guard / delegation / profiles-store /
+│                                 #   presets-sync / http-routes / profile-provider / dispatch-tool
 ├── presets/orchestrator/         # bundled "orchestrator" agent preset (self-installed, synced on every startup)
 ├── cordis.patch.yml              # bundle patch: inserts the plugin row into the host composition
-├── package.json                  # metadata, files whitelist, exports
-├── scripts/release.mjs           # release helper (version bump / tag checks)
+├── .gitea/workflows/ci.yml       # bare-CI (Gitea Actions; needs an Act runner on the server)
+├── package.json                  # metadata, files whitelist, exports (test / test:bare / preflight scripts)
+├── scripts/
+│   ├── release.mjs               # release helper (version bump / tag checks)
+│   └── preflight.mjs             # preflight: preset-tree reconciliation + README badge == version (zero-dep)
 ├── docs/
 │   └── screenshots/              # README screenshots
-├── test/                         # host-side tests (node:test, zero extra deps; 96 cases)
-│   ├── README.md / README.zh.md  # test directory guide (EN/ZH)
+├── test/                         # host-side tests (node:test, zero extra deps; 101 cases = 26 bare + 75 junction)
+│   ├── README.md / README.zh.md  # test directory guide (EN/ZH) — two-tier split explained
 │   ├── harness/ctx.mjs           # fake Cordis ctx + ~/.dsh isolation
-│   ├── characterization.test.mjs # apply() behavior snapshot
-│   └── *.test.mjs                # pure / input-schema / persist / continuable-guard / cost-guard / gating / recycle / facade
+│   ├── pure / input-schema / catalog-integrity.test.mjs   # bare tier (import-free, runs in bare CI)
+│   └── characterization / facade / gating / persist / recycle / cost-guard / continuable-guard.test.mjs  # junction tier (local only)
 ├── README.md / README.zh.md      # this document (EN/ZH)
 └── LICENSE
 ```
@@ -119,6 +126,11 @@ dsh-subagent-profile/
 ## Contributing
 
 Found a bug or have an idea? [Open an issue](https://github.com/muzyLink/dsh-subagent-profile/issues) or submit a pull request — all contributions are welcome.
+
+### CI (bare) & preflight
+
+- **Gitea Actions** (`.gitea/workflows/ci.yml`): on `push` / `pull_request` to `v2-midterm` / `main`, runs the **bare-CI** subset — the tests that never load `@deepseek-ai` (`npm run test:bare`: pure / input-schema / catalog-integrity), `node --check` syntax checks, eslint (installed in isolation, since the bare environment cannot install the `@deepseek-ai` devDependencies), and `npm run preflight`. **Enabling Gitea Actions requires installing an Act runner on the server** (register it with the `ubuntu-latest` label); the workflow takes effect automatically once the runner is ready. Junction-dependent tests (characterization / facade / gating / persist / recycle / cost-guard / continuable-guard) run locally only — see `test/README.md` for the two-tier split and its rationale.
+- **Preflight** (`npm run preflight`): zero-dependency self-check — ① reconciles the bundled `presets/` tree against a fresh `$DSH_HOME/.agent-presets` derived tree (byte-identical set, both directions; never touches the real `~/.dsh`), ② asserts the README version badge (`v<version>` in the hero) matches `package.json` `version`. Non-zero exit means drift — fix and re-run before release.
 
 If this plugin has been useful to you, please give it a ⭐ on GitHub — it helps others find it.
 

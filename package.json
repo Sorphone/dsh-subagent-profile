@@ -10,7 +10,9 @@
   "main": "index.mjs",
   "scripts": {
     "release": "node scripts/release.mjs",
-    "test": "node --test \"test/**/*.test.mjs\""
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "test:bare": "node --test test/pure.test.mjs test/input-schema.test.mjs test/catalog-integrity.test.mjs",
+    "preflight": "node scripts/preflight.mjs"
   },
   "exports": {
     ".": "./index.mjs",
