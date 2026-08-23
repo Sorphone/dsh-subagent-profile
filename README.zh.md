@@ -14,7 +14,7 @@
 
 > 《思考，快与慢》：系统 1 快而省，系统 2 慢而稳。内置的 `subagent` 给所有子任务同一个「大脑」，分不出快慢；`dsh-subagent-profile` 让你按任务指定——调研用快思考，攻坚用慢思考，常用搭配存成命名**方案**。
 
-## 为什么内置 `subagent` 不够用
+## 为什么选这个插件
 
 | | 内置 `subagent` | `dsh-subagent-profile` |
 |---|---|---|
@@ -24,13 +24,11 @@
 | 成本护栏 | ❌ | ✅ 模型/推理强度/token/深度上限 |
 | GUI 管理 | ❌ | ✅ 设置页 |
 
-## 解决什么问题
-
 - **按子任务指定子 Agent 的「大脑」。** `dispatch` 给每个子任务单独指定：用哪个预设（composition）、哪个模型、哪种推理强度、只开哪些工具、给多少 token 上限。查资料和写代码两个子任务可以用完全不同的配置——这是内置 `subagent` 做不到的（它只能让子任务继承父 Agent 的同一套配置）。
 - **把常用搭配存成命名方案，按名调用。** 「方案」= 预设 + 模型 + 推理强度 + 工具范围 + 人设的一揽子配置。把「调研」存成 `researcher`（关深度推理、只留检索工具），以后 `dispatch(profile="researcher")` 即可；内置 `swap-standard`（切到 standard 全套编码工具）和 `researcher` 两个现成方案，也能在设置页自己增删改。
 - **每次派发都看得见实际用了什么。** 结果里标注实际生效的方案/预设/模型/推理强度，日志带 `[dsh-subagent-profile]` 标记，方便排查。
 
-## 快速开始
+## 安装
 
 ```bash
 dsh plugin --profile web add dsh-subagent-profile        # 发布包
@@ -43,7 +41,14 @@ dsh plugin --profile web add ./dsh-subagent-profile      # 本地检出
 
 ### 1. 配置子 Agent 方案
 
-在设置页管理命名方案——每个方案打包预设 + 模型 + 推理强度 + 工具范围（可选人设），可单独启用、禁用、编辑或批量重置。
+在设置页管理命名方案——每个方案打包预设 + 模型 + 推理强度 + 工具范围（可选人设），可单独启用、禁用、编辑或批量重置。内置两个现成方案：
+
+| 方案 | 用途 |
+|---|---|
+| `swap-standard` | 子 Agent 切换为 standard 全套编码工具 |
+| `researcher` | 关深度推理、只留检索工具 |
+
+方案保存在 `~/.dsh/subagent-profiles.json`，改完立即生效（在设置页编辑）。
 
 ![内置方案列表：可编辑、删除、单独启用/禁用](docs/screenshots/settings-page1.png)
 
@@ -60,15 +65,6 @@ dispatch(
 ```
 
 ![dispatch 工具调用卡片：每次派发都显示实际生效的配置](docs/screenshots/dispatch-card.png)
-
-## 方案（Profiles）
-
-方案保存在 `~/.dsh/subagent-profiles.json`，改完立即生效（在设置页编辑）。
-
-| 方案 | 用途 |
-|---|---|
-| `swap-standard` | 子 Agent 切换为 standard 全套编码工具 |
-| `researcher` | 关深度推理、只留检索工具 |
 
 ## 安全模型
 

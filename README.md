@@ -14,7 +14,7 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH).
 
 > *Thinking, Fast and Slow*: System 1 is fast and cheap, System 2 is slow and careful. The built-in `subagent` gives every subtask the same brain as its parent — no way to tell them apart. `dsh-subagent-profile` lets you pick per subtask: research with a fast brain, deep work with a careful one, saved as named **profiles**.
 
-## Why the built-in `subagent` isn't enough
+## Why this plugin
 
 | | Built-in `subagent` | `dsh-subagent-profile` |
 |---|---|---|
@@ -24,13 +24,11 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH).
 | Cost guardrails | ❌ | ✅ model / effort / tokens / depth capped |
 | GUI management | ❌ | ✅ settings page |
 
-## What it solves
-
 - **Per-subtask control over the child's brain.** `dispatch` sets, per subtask: which preset (composition), which model, which reasoning effort, which tools, and the token cap. A research subtask and a coding subtask can run with completely different setups — something the plain `subagent` tool can't do (it only inherits the parent).
 - **Named, reusable profiles.** A profile is one bundle of preset + model + reasoning effort + tool scope + persona. Save "research" as `researcher` (reasoning off, search-only tools) and dispatch with `dispatch(profile="researcher")`; two built-ins ship (`swap-standard` = full standard coding toolkit, `researcher`), and you can add/edit/remove your own in the settings page.
 - **Fully observable.** Every result reports the effective profile / preset / model / reasoning effort; logs are tagged `[dsh-subagent-profile]`.
 
-## Quick start
+## Installation
 
 ```bash
 dsh plugin --profile web add dsh-subagent-profile        # published package
@@ -43,7 +41,14 @@ Restart `dsh web`. This is a standard **bundle plugin**: it provides the `dispat
 
 ### 1. Configure sub-agent profiles
 
-Profiles are managed in the settings page — each one bundles preset + model + reasoning effort + tool scope (and optionally a persona), and can be enabled, disabled, edited, or reset individually.
+Profiles are managed in the settings page — each one bundles preset + model + reasoning effort + tool scope (and optionally a persona), and can be enabled, disabled, edited, or reset individually. Two built-ins ship:
+
+| Profile | Purpose |
+|---|---|
+| `swap-standard` | switch the child to the full standard coding toolkit |
+| `researcher` | deep reasoning off, search-only tools |
+
+Profiles live in `~/.dsh/subagent-profiles.json` and take effect immediately (edits are made from the settings page).
 
 ![Built-in profile list — editable, deletable, individually toggleable](docs/screenshots/settings-page1.png)
 
@@ -60,15 +65,6 @@ dispatch(
 ```
 
 ![dispatch tool-call card — every result shows what actually ran](docs/screenshots/dispatch-card.png)
-
-## Profiles
-
-Profiles live in `~/.dsh/subagent-profiles.json` and take effect immediately (edits are made from the settings page).
-
-| Profile | Purpose |
-|---|---|
-| `swap-standard` | switch the child to the full standard coding toolkit |
-| `researcher` | deep reasoning off, search-only tools |
 
 ## Safety model
 
