@@ -8,10 +8,7 @@
 // in README.md.
 
 import { randomUUID } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { basename, dirname, join, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import {
   appendDelegatedPolicyOverrides,
   assertSubagentMaxDepth,
@@ -23,176 +20,25 @@ import {
   resolveChildDepth,
 } from './lib/shims.mjs';
 import { textFrom, stopReasonError, withPartialText, sanitizeProfile, GUIDANCE_PREFIX, assertHardLimits, computeContinuableAllow, pruneBlocks, assertResultSchemaConsistency } from './lib/pure.mjs';
+import { TOOL_ZH, TOOL_CATEGORY } from './lib/catalog.mjs';
+import { syncBundledPresets } from './lib/presets-sync.mjs';
+import { dshHome, BUILTIN_SEEDS, createProfileStore } from './lib/profiles-store.mjs';
 
 export const name = 'dsh-subagent-profile';
 export const inject = ['subagents', 'tools', 'agents'];
 
-// Resolve the DSH home directory (env override wins, platform fallback) — the
-// same policy as the dsh-persona-ref bundle: user profiles persist to
-// ~/.dsh/subagent-profiles.json, stable across harness working directories.
-function dshHome() {
-  const raw = process.env.DSH_HOME;
-  if (typeof raw === 'string' && raw.trim() !== '') {
-    const trimmed = raw.trim();
-    if (trimmed === '~') return homedir();
-    if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) return join(homedir(), trimmed.slice(2));
-    return trimmed;
-  }
-  return join(homedir(), '.dsh');
-}
+// Resolve the DSH home directory + the enable/disable switch + the profile
+// registry store now live in lib/profiles-store.mjs (imported above): dshHome /
+// BUILTIN_SEEDS / createProfileStore({ dshHome, logger }).
 
 // --- bundled agent-preset self-install --------------------------------------
-// On host startup the plugin syncs the bundled `presets/` tree into the DSH
-// agent-presets discovery root (~/.dsh/.agent-presets) so the "orchestrator"
-// mode appears in the new-session picker without manual copying — the same
-// self-install pattern as the shipped dsh-liangshen bundle. The sync is
-// per-directory and idempotent (byte-identical trees are skipped; target files
-// the bundle no longer ships are pruned); directories the plugin does not own
-// are never touched. node:fs cpSync is avoided deliberately: on Node 22 for
-// Windows, fs.cpSync({ recursive: true }) can crash the process when a source
-// path contains non-ASCII (CJK home dir, nodejs/node#54476), so the copy is
-// per-entry, preserving source mtimes.
-
-// Absolute path of the bundled preset tree inside this package.
-function bundledPresetsRoot() {
-  return join(dirname(fileURLToPath(import.meta.url)), 'presets');
-}
-
-const MTIME_TOLERANCE_MS = 1000;
-
-function filesUnder(root) {
-  const out = [];
-  const walk = (dir) => {
-    for (const entry of readdirSync(dir)) {
-      const path = join(dir, entry);
-      if (statSync(path).isDirectory()) walk(path);
-      else out.push(path);
-    }
-  };
-  walk(root);
-  return out;
-}
-
-// File identity is bytes; size/mtime are only a fast negative check.
-function sameFile(a, b) {
-  const sa = statSync(a);
-  const sb = statSync(b);
-  if (sa.size !== sb.size) return false;
-  if (Math.abs(sa.mtimeMs - sb.mtimeMs) > MTIME_TOLERANCE_MS) return false;
-  return readFileSync(a).equals(readFileSync(b));
-}
-
-function copyTreeSync(sourceDir, targetDir) {
-  mkdirSync(targetDir, { recursive: true });
-  for (const entry of readdirSync(sourceDir)) {
-    const source = join(sourceDir, entry);
-    const target = join(targetDir, entry);
-    const st = statSync(source);
-    if (st.isDirectory()) copyTreeSync(source, target);
-    else {
-      copyFileSync(source, target);
-      utimesSync(target, st.atime, st.mtime);
-    }
-  }
-}
-
-// Remove target files not in `keep`, then only the directories emptied by it.
-function pruneExtras(root, keep) {
-  const parents = new Set();
-  for (const file of filesUnder(root)) {
-    if (!keep.has(relative(root, file))) {
-      parents.add(dirname(file));
-      rmSync(file, { force: true });
-    }
-  }
-  for (const start of parents) {
-    let dir = start;
-    while (dir !== undefined && relative(root, dir) !== '') {
-      if (existsSync(dir) && readdirSync(dir).length === 0) {
-        rmSync(dir, { recursive: true, force: true });
-        dir = dirname(dir);
-      } else dir = undefined;
-    }
-  }
-}
-
-// Copy `sourceDir` into `targetDir` idempotently; returns 'synced' or 'current'.
-function syncOnePreset(sourceDir, targetDir) {
-  const sourceFiles = filesUnder(sourceDir);
-  const sourceSet = new Set(sourceFiles.map((f) => relative(sourceDir, f)));
-  if (existsSync(targetDir) && !statSync(targetDir).isDirectory()) {
-    rmSync(targetDir, { recursive: true, force: true });
-  }
-  if (!existsSync(targetDir)) {
-    copyTreeSync(sourceDir, targetDir);
-    pruneExtras(targetDir, sourceSet);
-    return 'synced';
-  }
-  let dirty = false;
-  for (const file of sourceFiles) {
-    const dest = join(targetDir, relative(sourceDir, file));
-    if (!existsSync(dest) || !sameFile(file, dest)) { dirty = true; break; }
-  }
-  if (!dirty) {
-    for (const file of filesUnder(targetDir)) {
-      if (!sourceSet.has(relative(targetDir, file))) { dirty = true; break; }
-    }
-  }
-  if (!dirty) return 'current';
-  pruneExtras(targetDir, sourceSet);
-  copyTreeSync(sourceDir, targetDir);
-  pruneExtras(targetDir, sourceSet);
-  return 'synced';
-}
-
-// Sync every preset directory under `presets/` into the target discovery root.
-function syncBundledPresets(targetRoot) {
-  const result = { synced: [], current: [], failed: [] };
-  const sourceRoot = bundledPresetsRoot();
-  mkdirSync(targetRoot, { recursive: true });
-  if (existsSync(sourceRoot)) {
-    for (const entry of readdirSync(sourceRoot)) {
-      const source = join(sourceRoot, entry);
-      if (!statSync(source).isDirectory()) continue;
-      const id = basename(source);
-      try {
-        const outcome = syncOnePreset(source, join(targetRoot, id));
-        (outcome === 'synced' ? result.synced : result.current).push(id);
-      } catch (error) {
-        result.failed.push({ id, error: error instanceof Error ? error.message : String(error) });
-      }
-    }
-  }
-  return result;
-}
+// Implemented in lib/presets-sync.mjs (imported above): bundledPresetsRoot /
+// MTIME_TOLERANCE_MS / filesUnder / sameFile / copyTreeSync / pruneExtras /
+// syncOnePreset / syncBundledPresets were moved there verbatim. The call site
+// below keeps the same shape: syncBundledPresets(join(dshHome(), '.agent-presets')).
 
 // Only the loopback interfaces may drive the settings HTTP routes.
 const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
-
-// The plugin's enable/disable switch. Persisted beside the profile list so a
-// user can turn the dispatch tool off without uninstalling the bundle. Default
-// is enabled; a missing/unreadable file falls back to enabled.
-function stateFile() {
-  return join(dshHome(), 'subagent-profiles.state.json');
-}
-function loadEnabled() {
-  try {
-    if (existsSync(stateFile())) {
-      const parsed = JSON.parse(readFileSync(stateFile(), 'utf8'));
-      return parsed && parsed.enabled !== false;
-    }
-  } catch {
-    // fall through to enabled
-  }
-  return true;
-}
-function persistEnabled(enabled) {
-  try {
-    writeFileSync(stateFile(), JSON.stringify({ enabled }, null, 2), 'utf8');
-  } catch {
-    // best effort — the in-memory state still drives this process
-  }
-}
 
 // --- module-level helpers (kept inline; the packages do not export them) ---
 
@@ -315,107 +161,19 @@ export async function apply(ctx) {
   // 0. Enable/disable switch: default on, toggled at runtime by the settings
   //    page and persisted across restarts. When off, the dispatch tool is
   //    unregistered so it disappears from the model's tool list.
-  let enabled = loadEnabled();
+  // 1. Profile registry + enable/disable switch + persistence now live in
+  //    lib/profiles-store.mjs: createProfileStore({ dshHome, logger }) returns
+  //    the profiles Map, deletedBuiltins Set, resolveProfile / loadProfiles /
+  //    persistProfiles / loadEnabled / persistEnabled / getAllowFailOpen.
+  //    loadProfiles runs once at startup via the explicit call below (the
+  //    factory itself does not auto-load).
+  const store = createProfileStore({ dshHome: dshHome(), logger: ctx.logger });
+  let enabled = store.loadEnabled();
+  store.loadProfiles();
 
-  // 1. Profile registry (per-instance state; a bundle row is process-level, so
-  //    this Map is the singleton store, exactly like the dynamic plugin's).
-  //    Builtin seeds carry `builtin: true` so reset/remove can identify them and
-  //    a modified builtin stays distinguishable from a pure user profile.
-  //    Descriptions are semantic: one-line positioning + when to use, to help
-  //    the model choose. reasoningEffort levels verified against the
-  //    llm-deepseek adapter (off/high/max; see resolveModel gating on
-  //    connection.defaults.thinking — this deployment leaves thinking unset,
-  //    so the full set is advertised for deepseek-v4-flash).
-  const BUILTIN_SEEDS = [
-    { id: 'swap-standard', name: '标准编码', description: '切换到 standard 预设的完整编码工具集。当父会话不是 standard、但子任务需要完整编码能力时用。', preset: 'standard', builtin: true },
-    { id: 'researcher', name: '调研检索', description: '关闭深度推理省 token，继承父工具。适合查资料、汇总、背景调研，不适合改代码。', reasoningEffort: 'off', persona: 'You are a research subagent: search, read, and summarize only. Do not modify code or files.', builtin: true }
-  ];
-
-  // Tool-name → 中文说明 map, shown beside the raw tool name in the toolFilter
-  // picker. Tools absent here fall back to their raw name.
-  const TOOL_ZH = {
-    'bash': '终端命令',
-    'pwsh': 'PowerShell 命令',
-    'read': '读取文件',
-    'write': '写入文件',
-    'edit': '编辑文件',
-    'grep': '搜索文件内容',
-    'glob': '查找文件',
-    'web_search': '网页搜索',
-    'browser_navigate': '浏览器打开网址',
-    'browser_snapshot': '浏览器页面快照',
-    'browser_click': '浏览器点击',
-    'browser_type': '浏览器输入',
-    'browser_scroll': '浏览器滚动',
-    'browser_back': '浏览器后退',
-    'browser_forward': '浏览器前进',
-    'browser_press': '浏览器按键',
-    'browser_reload': '浏览器刷新',
-    'browser_wait': '浏览器等待',
-    'browser_get_text': '读取页面文本',
-    'dispatch': '派发子 Agent',
-    'subagent': '派生子 Agent',
-    'subagent_fork': '派生子 Agent（继承上下文）',
-    'send_message': '给子 Agent 发消息',
-    'interrupt_agent': '中断子 Agent',
-    'list_agents': '列出子 Agent',
-    'todo_write': '任务清单',
-    'create_goal': '创建目标',
-    'get_goal': '查看目标',
-    'update_goal': '更新目标',
-    'workflow': '编排多 Agent 工作流',
-    'ralph': 'Ralph 迭代',
-    'ask_user_question': '询问用户',
-    'skill': '加载技能',
-    'describe_image': '描述图片',
-    'read_image': '读取图片',
-    'modlens_read_image': '读取图片（modlens）',
-    'ssh_list': '列出 SSH 主机',
-    'ssh_exec': 'SSH 执行命令',
-    'ssh_upload': 'SSH 上传',
-    'ssh_download': 'SSH 下载',
-    'ssh_tunnel': 'SSH 隧道',
-    'ssh_cluster': 'SSH 集群执行',
-    'exit_plan_mode': '退出计划模式',
-    'incident_resolved': '标记事故已解决',
-    'dsh_rollback': '回滚 DSH',
-    'dsh_snapshot': 'DSH 快照',
-    'job_list': '列出后台任务',
-    'job_output': '读取后台任务输出',
-    'job_kill': '终止后台任务',
-    'str_replace_editor': '文本编辑',
-    'cordis_inspect_list': '列出 Cordis 服务',
-    'cordis_inspect_query': '查询 Cordis 服务',
-    'cordis_inspect_self': '查看自身 Cordis 服务',
-    'cordis_define': '定义 Cordis 服务',
-    'cordis_run': '运行 Cordis 服务',
-    'cordis_stop': '停止 Cordis 服务',
-    'cordis_undefine': '取消定义 Cordis 服务',
-    'run_code': '运行代码',
-  };
-
-  // Tool-name → 功能分类 map，覆盖 DSH 官方核心工具（固定集合）。插件工具
-  // 走前缀提取（见 categoryOf），自建预设用 preset 名。
-  const TOOL_CATEGORY = {
-    'read': '文件', 'write': '文件', 'edit': '文件', 'grep': '文件', 'glob': '文件', 'str_replace_editor': '文件',
-    'bash': '终端', 'pwsh': '终端',
-    'web_search': '网络',
-    'todo_write': '任务', 'create_goal': '任务', 'get_goal': '任务', 'update_goal': '任务',
-    'subagent': '子 Agent', 'subagent_fork': '子 Agent', 'send_message': '子 Agent', 'interrupt_agent': '子 Agent', 'list_agents': '子 Agent',
-    'workflow': '工作流', 'ralph': '工作流',
-    'ask_user_question': '交互', 'skill': '交互',
-    'read_image': '图片', 'describe_image': '图片',
-    'cordis_inspect_list': 'Cordis', 'cordis_inspect_query': 'Cordis', 'cordis_inspect_self': 'Cordis',
-    'cordis_define': 'Cordis', 'cordis_run': 'Cordis', 'cordis_stop': 'Cordis', 'cordis_undefine': 'Cordis',
-    'exit_plan_mode': '计划',
-  };
-
-  const profiles = new Map(BUILTIN_SEEDS.map((p) => [p.id, { ...p }]));
-
-  // Builtin ids the user has deleted (soft delete via persisted tombstone). The
-  // Map keeps working entries; this Set records tombstones so they survive
-  // restarts and a later reset can clear them.
-  const deletedBuiltins = new Set();
+  // Tool-name → 中文说明 map (TOOL_ZH) and 功能分类 map (TOOL_CATEGORY) now live
+  // in lib/catalog.mjs (imported at the top); the /options handler reads them
+  // from the module-level bindings.
 
   // F6: the target-preset whitelist is derived from the runtime roster, not
   // hard-coded: system-trust presets when agentPresets exists, else the
@@ -427,94 +185,6 @@ export async function apply(ctx) {
     const presets = await agentPresets.list();
     return (presets ?? []).filter((preset) => preset && preset.trust === 'system').map((preset) => preset.id);
   }
-
-  function resolveProfile(id) {
-    const found = profiles.get(id);
-    if (found === undefined) throw new Error(`dispatch: unknown profile "${id}"`);
-    if (found.enabled === false) throw new Error(`dispatch: profile "${id}" is disabled`);
-    return found;
-  }
-
-  // 1b. User profile persistence. The settings service cannot serve this
-  // plugin (its write path hard-requires register(ns, schema) + a schemastery
-  // schema), so user profiles are persisted to ~/.dsh/subagent-profiles.json
-  // through node:fs — a bundle has node globals, unlike the dynamic-plugin
-  // sandbox that needed the optional `fs` service. Loaded once at startup; the
-  // add/remove HTTP routes rewrite the file. Persistence is an enhancement, not
-  // a hard dependency: any failure only warns and the builtin seeds work.
-  const profilesFile = join(dshHome(), 'subagent-profiles.json');
-  // V2 migration switch (SPEC §7.3 / §12.1): whether the cost guard may fail-open
-  // when the `llm` service is absent. Defaults to FALSE (fail-loud, SPEC §7.3
-  // 评审遗留裁定: 全新部署 fail-loud); only a v1 data file being read sets it to
-  // true (v1 迁移 fail-open 兼容). A v2 envelope carries its own stored value.
-  // Task 4 (cost-guard narrow) reads this flag.
-  let allowFailOpen = false;
-  function loadProfiles() {
-    if (!existsSync(profilesFile)) return;
-    try {
-      const parsed = JSON.parse(readFileSync(profilesFile, 'utf8'));
-      // Two file shapes (SPEC §12.1): v1 = a bare array; v2 = { version:2,
-      // profiles:[...], allowFailOpen:<bool> }.
-      let entries;
-      let version;
-      if (Array.isArray(parsed)) {
-        entries = parsed;
-        version = 1;
-      } else if (parsed !== null && typeof parsed === 'object' && Array.isArray(parsed.profiles)) {
-        entries = parsed.profiles;
-        version = parsed.version ?? 2;
-        // v2 缺 allowFailOpen 字段时按 fail-open 兼容（显式 false 才关闭）；
-        // 全新部署默认已定：fail-loud（初始 allowFailOpen=false，见上方声明），
-        // 读入 v2 文件按其存储值读取并保持。
-        allowFailOpen = parsed.allowFailOpen !== false;
-      } else {
-        ctx.logger.warn('[dsh-subagent-profile] persisted profile file has an unrecognized shape; ignoring');
-        return;
-      }
-      // v1 (or an unversioned array): migrate in memory, keep fail-open compat.
-      if (version !== 2) {
-        allowFailOpen = true;
-        ctx.logger.warn('[dsh-subagent-profile] v1 数据：fail-open 兼容模式');
-      }
-      let loaded = 0;
-      let skipped = 0;
-      for (const raw of entries) {
-        if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string' || raw.id.length === 0) {
-          skipped++;
-          ctx.logger.warn('[dsh-subagent-profile] skipping malformed profile entry:', raw === null ? String(raw) : typeof raw);
-          continue;
-        }
-        // Per-entry sanitize (strict=false): over-limit fields are dropped
-        // (field removed) + warned; an over-length persona is KEPT + warned
-        // (never silently truncated). A bad entry is skipped (fail-soft).
-        const { clean, warnings } = sanitizeProfile(raw, { strict: false });
-        for (const warning of warnings) {
-          ctx.logger.warn(`[dsh-subagent-profile] profile "${raw.id}" ${warning.field} 被跳过或提示：${warning.reason}`);
-        }
-        if (clean.deleted === true) {
-          if (clean.builtin === true) {
-            profiles.delete(clean.id);
-            deletedBuiltins.add(clean.id);
-          }
-          continue;
-        }
-        const existing = profiles.get(clean.id);
-        if (existing !== undefined && existing.builtin === true) {
-          profiles.set(clean.id, { ...clean, builtin: true, persisted: true });
-        } else {
-          profiles.set(clean.id, { ...clean, persisted: true });
-        }
-        loaded++;
-      }
-      // Silent success: report how many persisted profiles came in (skipped
-      // when none — a missing/empty file is the normal first boot).
-      if (loaded > 0) ctx.logger.info(`[dsh-subagent-profile] loaded ${loaded} persisted profile(s)`);
-      if (skipped > 0) ctx.logger.warn(`[dsh-subagent-profile] skipped ${skipped} malformed profile entry(ies)`);
-    } catch (error) {
-      ctx.logger.warn('[dsh-subagent-profile] persisted profile load failed:', error instanceof Error ? error.message : String(error));
-    }
-  }
-  loadProfiles();
 
   // 1c. Self-install the bundled "orchestrator" agent preset into the DSH
   // agent-presets root so the mode appears in the new-session picker without
@@ -529,43 +199,6 @@ export async function apply(ctx) {
     if (sync.synced.length > 0) ctx.logger.info(`[dsh-subagent-profile] presets synced into ${presetRoot}: ${sync.synced.join(', ')}`);
   } catch (error) {
     ctx.logger.warn('[dsh-subagent-profile] preset sync failed:', error instanceof Error ? error.message : String(error));
-  }
-
-  /**
-   * Persist every `persisted: true` profile plus builtin-delete tombstones.
-   * Atomic write (SPEC §12.2): write `<profilesFile>.tmp` in the same directory,
-   * then `renameSync` over the target (a crash leaves the old file intact, never
-   * a truncated one). Fail-visible (D5/B1): a failure does NOT throw and does NOT
-   * roll back the in-memory `profiles` Map — it returns `{ persisted: false }` so
-   * the caller can signal "已保存但未持久化" while the in-memory state keeps
-   * driving this process. Always writes the v2 envelope shape.
-   */
-  function persistProfiles() {
-    const entries = [];
-    for (const profile of profiles.values()) {
-      if (profile.persisted !== true) continue;
-      const clean = {};
-      for (const [key, value] of Object.entries(profile)) {
-        if (value === undefined || key === 'persisted') continue;
-        clean[key] = value;
-      }
-      entries.push(clean);
-    }
-    for (const id of deletedBuiltins) {
-      entries.push({ id, builtin: true, deleted: true });
-    }
-    const payload = { version: 2, profiles: entries, allowFailOpen };
-    const tmp = `${profilesFile}.tmp`;
-    try {
-      writeFileSync(tmp, JSON.stringify(payload, null, 2), 'utf8');
-      renameSync(tmp, profilesFile);
-      return { persisted: true };
-    } catch (error) {
-      // Best-effort cleanup of the partial tmp file (rename never ran).
-      try { rmSync(tmp, { force: true }); } catch { /* best effort */ }
-      ctx.logger.warn('[dsh-subagent-profile] persisted profile write failed:', error instanceof Error ? error.message : String(error));
-      return { persisted: false, error: error instanceof Error ? error.message : String(error) };
-    }
   }
 
   // 1c. HTTP loopback routes for the Client settings UI (webServer.register ↔
@@ -602,7 +235,7 @@ export async function apply(ctx) {
       persisted: persist.persisted,
       ...(persist.persisted ? {} : { persistWarning: '已保存但未持久化' }),
     });
-    const listClean = () => [...profiles.values()].map((profile) => {
+    const listClean = () => [...store.profiles.values()].map((profile) => {
       const clean = {};
       for (const [key, value] of Object.entries(profile)) if (value !== undefined && key !== 'persisted') clean[key] = value;
       // The internal `persisted` flag is stripped above; expose a UI-facing
@@ -716,7 +349,7 @@ export async function apply(ctx) {
           const body = await readBody(req);
           const next = !!(body && body.enabled === true);
           enabled = next;
-          persistEnabled(next);
+          store.persistEnabled(next);
           syncTool();
           return json(res, 200, { ok: true, enabled });
         }
@@ -734,7 +367,7 @@ export async function apply(ctx) {
             return json(res, 400, { ok: false, error: `写入被拒绝：${detail}` });
           }
           const hadToolFilter = profile.toolFilter !== undefined;
-          const existing = profiles.get(clean.id);
+          const existing = store.profiles.get(clean.id);
           const seed = BUILTIN_SEEDS.find((s) => s.id === clean.id);
           const isBuiltin = (existing !== undefined && existing.builtin === true) || seed !== undefined;
           // Merge (not replace): start from the existing profile — or its seed
@@ -761,20 +394,20 @@ export async function apply(ctx) {
             }
           }
           if (merged.enabled !== undefined) merged.enabled = merged.enabled === false ? false : true;
-          profiles.set(merged.id, { ...merged, ...(isBuiltin ? { builtin: true } : {}), persisted: true });
-          deletedBuiltins.delete(merged.id);
-          return persistOk(res, { id: merged.id }, persistProfiles());
+          store.profiles.set(merged.id, { ...merged, ...(isBuiltin ? { builtin: true } : {}), persisted: true });
+          store.deletedBuiltins.delete(merged.id);
+          return persistOk(res, { id: merged.id }, store.persistProfiles());
         }
         if (req.method === 'POST' && sub === '/remove') {
           const body = await readBody(req);
           const id = body && typeof body === 'object' && typeof body.id === 'string' ? body.id : '';
-          const existing = profiles.get(id);
+          const existing = store.profiles.get(id);
           if (existing === undefined) {
             return json(res, 404, { ok: false, error: `subagent-profiles: profile "${id}" does not exist` });
           }
-          profiles.delete(id);
-          if (existing.builtin === true) deletedBuiltins.add(id);
-          return persistOk(res, { id }, persistProfiles());
+          store.profiles.delete(id);
+          if (existing.builtin === true) store.deletedBuiltins.add(id);
+          return persistOk(res, { id }, store.persistProfiles());
         }
         if (req.method === 'POST' && sub === '/reset') {
           const body = await readBody(req);
@@ -783,21 +416,21 @@ export async function apply(ctx) {
           if (seed === undefined) {
             return json(res, 404, { ok: false, error: `subagent-profiles: profile "${id}" is not a builtin (nothing to reset)` });
           }
-          profiles.set(id, { ...seed });
-          deletedBuiltins.delete(id);
-          return persistOk(res, { id }, persistProfiles());
+          store.profiles.set(id, { ...seed });
+          store.deletedBuiltins.delete(id);
+          return persistOk(res, { id }, store.persistProfiles());
         }
         if (req.method === 'POST' && sub === '/reset-all') {
           for (const seed of BUILTIN_SEEDS) {
-            profiles.set(seed.id, { ...seed });
-            deletedBuiltins.delete(seed.id);
+            store.profiles.set(seed.id, { ...seed });
+            store.deletedBuiltins.delete(seed.id);
           }
-          return persistOk(res, { count: BUILTIN_SEEDS.length }, persistProfiles());
+          return persistOk(res, { count: BUILTIN_SEEDS.length }, store.persistProfiles());
         }
         if (req.method === 'POST' && sub === '/set-profile-enabled') {
           const body = await readBody(req);
           const id = body && typeof body === 'object' && typeof body.id === 'string' ? body.id : '';
-          const existing = profiles.get(id);
+          const existing = store.profiles.get(id);
           if (existing === undefined) {
             return json(res, 404, { ok: false, error: `subagent-profiles: profile "${id}" does not exist` });
           }
@@ -805,7 +438,7 @@ export async function apply(ctx) {
           // Persist unconditionally (not just for builtins): a runtime-registered
           // profile's enable/disable must also survive a restart.
           existing.persisted = true;
-          return persistOk(res, { id, enabled: existing.enabled }, persistProfiles());
+          return persistOk(res, { id, enabled: existing.enabled }, store.persistProfiles());
         }
         json(res, 404, { ok: false, error: `未知路由 ${sub}` });
       } catch (error) {
@@ -820,30 +453,31 @@ export async function apply(ctx) {
     }, 'dsh-subagent-profile: settings routes');
   });
 
-  // C: subagent-profiles service over the same closure Map — lets the outside
-  // world enumerate and extend the registry without touching internals.
+  // C: subagent-profiles service over the store's per-apply profiles Map —
+  // lets the outside world enumerate and extend the registry without touching
+  // internals.
   ctx.provide('subagent-profiles', {
     register(profile) {
       if (!profile || typeof profile.id !== 'string' || profile.id.length === 0) {
         throw new Error('subagent-profiles: profile id must be a non-empty string');
       }
-      if (profiles.has(profile.id)) {
+      if (store.profiles.has(profile.id)) {
         throw new Error(`subagent-profiles: profile "${profile.id}" is already registered`);
       }
       const registered = { ...profile };
-      profiles.set(profile.id, registered);
+      store.profiles.set(profile.id, registered);
       return () => {
-        if (profiles.get(profile.id) === registered) profiles.delete(profile.id);
+        if (store.profiles.get(profile.id) === registered) store.profiles.delete(profile.id);
       };
     },
     get(id) {
-      return profiles.get(id);
+      return store.profiles.get(id);
     },
     list() {
-      return [...profiles.values()];
+      return [...store.profiles.values()];
     },
     resolve(id) {
-      return resolveProfile(id);
+      return store.resolveProfile(id);
     }
   });
 
@@ -898,7 +532,7 @@ export async function apply(ctx) {
       order: 116.5,
       text: (context) => {
         if (!sectionGatePasses(context)) return '';
-        const rows = [...profiles.values()]
+        const rows = [...store.profiles.values()]
           .filter((p) => p.enabled !== false)
           .map((p) => {
             // 引号引用：description 套引号；为空时显示占位符（不套引号）。压平
@@ -953,7 +587,7 @@ export async function apply(ctx) {
       }
       // F5: authoritative cost guard (runtime-derived; hard caps always applied,
       // llm capability gated by allowFailOpen — SPEC §7.3).
-      await assertCostGuard(parent, profile, allowFailOpen, ctx.logger);
+      await assertCostGuard(parent, profile, store.getAllowFailOpen(), ctx.logger);
       // Delegation depth: shipped helpers — assert the cap value, then resolve
       // the child depth (parent floor + 1) and enforce the cap.
       assertSubagentMaxDepth(profile.maxDepth);
@@ -1230,7 +864,7 @@ export async function apply(ctx) {
       const parent = exec.agent;
       if (!parent) throw new Error('dispatch requires calling agent');
       // Resolve the base profile (side channel), then overlay explicit args.
-      const base = args.profile !== undefined ? resolveProfile(args.profile) : {};
+      const base = args.profile !== undefined ? store.resolveProfile(args.profile) : {};
       const merged = { ...base };
       for (const key of ['preset', 'model', 'provider', 'reasoningEffort', 'persona', 'toolFilter', 'maxTokens', 'maxDepth']) {
         if (args[key] !== undefined) merged[key] = args[key];
@@ -1249,7 +883,7 @@ export async function apply(ctx) {
       }
       // F5: cost guard (runtime-derived; hard caps always applied, llm capability
       // gated by allowFailOpen — SPEC §7.3).
-      await assertCostGuard(parent, merged, allowFailOpen, ctx.logger);
+      await assertCostGuard(parent, merged, store.getAllowFailOpen(), ctx.logger);
       // D: effective delegation values for observability.
       const meta = {
         profile: args.profile ?? '(inline)',
