@@ -1,6 +1,8 @@
-// scripts/leak-scan.mjs — 公开前敏感信息扫描：遍历全历史（所有 ref 可达提交）
-// 与工作区，匹配私网地址、本机用户名、本机绝对路径、凭据模式。任何命中即
-// 非零退出（发布前第 0 步门禁）。零依赖（node 内置 + git）。
+// scripts/leak-scan.mjs — 公开前敏感信息扫描：遍历 git 可达历史（--all 与
+// HEAD 两个范围），匹配私网地址、本机用户名、本机绝对路径、凭据模式、
+// 内部标识词。任何命中即非零退出（发布前第 0 步门禁）。零依赖（node 内置 +
+// git）。注意：只扫已提交内容（git log 语义），未提交/暂存内容不在扫描范围；
+// 发布脚本要求干净工作区，门禁执行时工作区必为已提交状态。
 //
 // 作者身份门禁（2026-08 教训：公开历史曾出现个人 QQ 邮箱与内网 IP 邮箱）：
 // 另扫「将公开的 main 分支」提交作者，邮箱非 @users.noreply.github.com 结尾
@@ -23,6 +25,12 @@ const PATTERNS = [
   { name: 'api key 赋值', regex: "api[_-]?key\\s*[:=]\\s*[^\\s\"']+" },
   { name: '长 token 赋值', regex: '(token|access[_-]?token)\\s*[:=]\\s*[A-Za-z0-9._-]{16,}' },
   { name: '私钥材料', regex: 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' },
+  // 内部标识词（已删分支名 / 内网组织名）：任何公开内容不得出现这些词。
+  // 排除 scripts/leak-scan.mjs 自身——本文件的说明性注释会提及它们（自指）。
+  // 注：`v2-midterm` 不在此列——.gitea/workflows/ci.yml 的触发分支配置是功能
+  // 必需，且历史 README 已有残留（连删除它的提交都会被 -G 命中），无法以内容
+  // 门禁拦截；该词防再犯靠提交纪律与本地 postmortem 记录。
+  { name: '内部标识词（内部分支/组织名）', regex: 'v2-first-slice|main-legacy|DarkGitea', exclude: ['scripts/leak-scan.mjs'] },
 ];
 
 // 作者身份门禁（2026-08-24 教训入库，复盘记录仅本地留存不随包发布）：
@@ -35,12 +43,18 @@ const AUTHOR_EMAIL_SUFFIX = '@users.noreply.github.com';
 const ALLOWED_AUTHORS = [];
 
 // 对单个模式扫描全历史与工作区，返回命中行（提交缩写 + 匹配摘要）。
+// 带 exclude 的模式追加 pathspec 排除（git log -G 支持路径限定，
+// 只在该范围内匹配新增/删除行）。
 function scanPattern(pattern) {
   const hits = [];
   for (const scope of ['--all', 'HEAD']) {
+    const args = ['log', scope, '--oneline', '-G', pattern.regex, '--all-match'];
+    if (Array.isArray(pattern.exclude) && pattern.exclude.length > 0) {
+      args.push('--', '.', ...pattern.exclude.map((p) => `:(exclude)${p}`));
+    }
     let out;
     try {
-      out = execFileSync('git', ['log', scope, '--oneline', '-G', pattern.regex, '--all-match'], {
+      out = execFileSync('git', args, {
         encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
       });
     } catch {
@@ -55,10 +69,10 @@ function scanPattern(pattern) {
 }
 
 // 作者身份检查：扫「将公开的 main 分支」的全部提交作者，逐条校验。
-// 范围取 main（发布分支；含 tags 指向的历史）——内部分支（main-legacy 等）
-// 不进公开端，不在检查范围（如未来要公开须先重写，见 postmortem 文档）。
+// 范围取 main（发布分支；含 tags 指向的历史）——内部分支不进公开端，不在
+// 检查范围（如未来要公开须先重写，见本地 postmortem 记录）。
 // CI 浅克隆可能没有 main 分支：`git log main` 失败时回退 `git log HEAD`
-// （CI 只跑 main/v2-midterm 的 push，检查仍有效）。
+// （CI 只跑 main 与开发分支的 push，检查仍有效）。
 function scanAuthors() {
   const hits = [];
   let ref = 'main';
