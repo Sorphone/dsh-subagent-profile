@@ -8,7 +8,7 @@
 // registerSystemPromptSections / registerSettingsRoutes）保持 section 文本与
 // 门控逐字不变；`enabled` 始终经 getter 注入，门控读取当前值。
 
-import { renameSync } from 'node:fs';
+import { readdirSync, renameSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { syncBundledPresets } from './lib/core/presets-sync.mjs';
@@ -58,6 +58,26 @@ function removeOwnedData(home) {
     try { renameSync(join(home, file), join(home, `${file}.removed-${stamp}`)); } catch { /* 源不存在（正常首启）等：best effort */ }
   }
   try { renameSync(join(home, '.agent-presets', 'orchestrator'), join(home, '.agent-presets', `orchestrator.removed-${stamp}`)); } catch { /* best effort */ }
+}
+
+// 启动清理 S1 改名备份残留：.removed-<ts> 备份在下次正常启动后已无保留价值（数据
+// 文件按需重新生成），启动时清掉防积累（热重载/禁用反复触发 effect 会持续产生新
+// 备份）。只清本插件前缀（subagent-profiles.* 与 orchestrator.removed-*），不碰其它
+// 文件；卸载后用户手动改回原名的场景不受影响（改回后无 .removed 残留）。fail-soft。
+function cleanRemovedBackups(home) {
+  for (const dir of [home, join(home, '.agent-presets')]) {
+    let names;
+    try { names = readdirSync(dir); } catch { continue; }
+    for (const name of names) {
+      try {
+        if (name.startsWith('subagent-profiles.') && name.includes('.removed-')) {
+          rmSync(join(dir, name), { force: true });
+        } else if (name.startsWith('orchestrator.removed-')) {
+          rmSync(join(dir, name), { recursive: true, force: true });
+        }
+      } catch { /* best effort */ }
+    }
+  }
 }
 
 // 卸载接线：注销 dispatch 工具（若仍注册）+ 清空失败台账 + 级联取消在途派发 +
@@ -297,6 +317,8 @@ function createDispatch(ctx, store, catalog, ledger, guard, evoLedger, getEscape
 
 export async function apply(ctx) {
   const home = dshHome();
+  // 启动清理：上个生命周期留下的 .removed-* 备份残留（S1 改名的副产物）。
+  cleanRemovedBackups(home);
   // 派发台账 + 审计分级须在 store 之前构造：store 的治理审计钩子指向其 markGovernanceFailure。
   const evoLedger = createEvolutionLedger({ dshHome: home, pluginVersion: readPluginVersion(), warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
   const store = createProfileStore({ dshHome: home, logger: ctx.logger, onGovernanceFailure: () => evoLedger.markGovernanceFailure() });

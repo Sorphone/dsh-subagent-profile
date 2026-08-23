@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import {
   computeSummaries,
   parseDispatchRecords,
+  readSummaries,
   refreshSummaries,
   writeSummaries,
   weightedSuccess,
@@ -65,9 +66,10 @@ const FIXTURE_RECORDS = [
 ];
 
 // 标准 profile 的 L1 键（由 effective cfg 确定性重建）。台账不存 profileId，故 profile
-// 身份 = 生效配置签名；无区分性配置时记 '(inline)'。
-const STANDARD_L1_KEY = 'preset:standard|provider:p1|model:m1|effort:medium|persona:1|toolFilter:1';
-const RESEARCHER_L1_KEY = 'preset:researcher|provider:p1|model:m2|effort:off';
+// 身份 = 生效配置签名；无区分性配置时记 '(inline)'。预算轴 effort 不并入能力身份
+// （2026-08 评审第二轮：同一配置不同档位不拆组；纯 effort 配置才单独成键）。
+const STANDARD_L1_KEY = 'preset:standard|provider:p1|model:m1|persona:1|toolFilter:1';
+const RESEARCHER_L1_KEY = 'preset:researcher|provider:p1|model:m2';
 const CONTINUABLE_L1_KEY = 'provider:pX|model:mX';
 
 // --- L1/L2 复算：字段精确断言 + 可复现 ---------------------------------------------
@@ -267,5 +269,41 @@ test('refreshSummaries：dispatch.jsonl 缺失返回 skipped:no-ledger（不写�
     assert.equal(res.persisted, false);
     assert.equal(res.skipped, 'no-ledger');
     assert.ok(!existsSync(summariesFile), '无台账不写 summaries.json');
+  } finally { t.cleanup(); }
+});
+
+// --- 版本校验（§12.5，2026-08 评审第二轮）------------------------------------------
+
+test('readSummaries：未知版本 fail-soft 跳过（v≠1 → null + warn，不读数据）', () => {
+  const t = tmpDir();
+  try {
+    const file = join(t.dir, 'subagent-evolution', 'summaries.json');
+    const warns = [];
+    mkdirSync(join(t.dir, 'subagent-evolution'), { recursive: true });
+    writeFileSync(file, JSON.stringify({ v: 2, l1: { 'preset:standard': { deployments_total: 99 } } }), 'utf8');
+    assert.equal(readSummaries(file, { warn: (m) => warns.push(m) }), null, '未知版本跳过');
+    assert.equal(readSummaries(file, { warn: (m) => warns.push(m) }), null);
+    // 无 logger 也不抛。
+    assert.equal(readSummaries(file), null);
+    assert.ok(warns.length >= 1, 'warn 留痕');
+    assert.ok(warns[0].includes('版本'), 'warn 提及版本');
+  } finally { t.cleanup(); }
+});
+
+test('readSummaries：v=1 正常读取；损坏/形状不符 fail-soft 返回 null', () => {
+  const t = tmpDir();
+  try {
+    const file = join(t.dir, 'subagent-evolution', 'summaries.json');
+    mkdirSync(join(t.dir, 'subagent-evolution'), { recursive: true });
+    writeFileSync(file, JSON.stringify({ v: 1, l1: { a: 1 }, l2: {} }), 'utf8');
+    const parsed = readSummaries(file);
+    assert.equal(parsed.v, 1);
+    assert.deepEqual(parsed.l1, { a: 1 });
+    // 损坏文件 → null。
+    writeFileSync(file, '{broken', 'utf8');
+    assert.equal(readSummaries(file), null);
+    // 形状不符（无 l1）→ null。
+    writeFileSync(file, JSON.stringify({ v: 1 }), 'utf8');
+    assert.equal(readSummaries(file), null);
   } finally { t.cleanup(); }
 });

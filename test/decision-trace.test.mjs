@@ -21,6 +21,7 @@ import {
   effectiveMeta,
   hardLimitChecks,
   recordApprovalGate,
+  profileSnapshotOf,
 } from '../lib/core/decision-trace.mjs';
 import { assertResultSchemaConsistency, MAX_TOKENS, MAX_DEPTH } from '../lib/core/pure.mjs';
 import { applyCostGuardGate } from '../lib/core/dispatch-gates.mjs';
@@ -40,6 +41,56 @@ test('createDecisionTrace：骨架含 version/startedAt/parentContext/requested/
   assert.equal(trace.effective, undefined);
   assert.equal(trace.execution, undefined);
   assert.equal(trace.settled, undefined);
+});
+
+// ---- profileSnapshotOf：决策输入快照（2026-08 评审第二轮）------------------------
+
+test('profileSnapshotOf：enabled 过滤 + 字段抽取 + description 截断', () => {
+  const profiles = [
+    { id: 'researcher', description: '调研检索', preset: undefined, tokenTier: 'cheap', enabled: true },
+    { id: 'disabled-one', description: 'x', enabled: false },
+    { id: 'swap-standard', description: 'd'.repeat(500), preset: 'standard', tokenTier: 'balanced', enabled: true },
+    { id: 'bare', enabled: true },
+  ];
+  const snap = profileSnapshotOf(profiles, { maxDesc: 120 });
+  assert.equal(snap.total, 3, 'disabled 不计入 total');
+  assert.equal(snap.entries.length, 3);
+  assert.equal(snap.truncated, false);
+  assert.equal(snap.entries[0].id, 'researcher');
+  assert.equal(snap.entries[0].tokenTier, 'cheap');
+  assert.equal(snap.entries[0].preset, undefined, '无 preset 不写键');
+  assert.match(snap.entries[1].description, /^d{120}…$/, 'description 截 120 + 省略号');
+  assert.equal(snap.entries[2].description, undefined, '无 description 不写键');
+});
+
+test('profileSnapshotOf：条目数截到 maxEntries 并打 truncated 标记', () => {
+  const profiles = Array.from({ length: 10 }, (_, i) => ({ id: `p${i}`, enabled: true }));
+  const snap = profileSnapshotOf(profiles, { maxEntries: 6 });
+  assert.equal(snap.entries.length, 6);
+  assert.equal(snap.truncated, true);
+  assert.equal(snap.total, 10);
+  assert.equal(snap.entries[0].id, 'p0');
+  assert.equal(snap.entries[5].id, 'p5');
+});
+
+test('profileSnapshotOf：空/坏输入返回空快照', () => {
+  assert.deepEqual(profileSnapshotOf([]), { entries: [], truncated: false, total: 0 });
+  assert.deepEqual(profileSnapshotOf(null), { entries: [], truncated: false, total: 0 });
+  assert.deepEqual(profileSnapshotOf([null, 42, { enabled: false, id: 'x' }]), { entries: [], truncated: false, total: 0 });
+});
+
+test('requestedOf：tokenTier 透传 + profiles_snapshot 写入（决策输入快照）', () => {
+  const snap = profileSnapshotOf([{ id: 'researcher', description: '调研', tokenTier: 'cheap', enabled: true }]);
+  const req = requestedOf({ prompt: 't', profile: 'researcher', tokenTier: 'premium' }, { profiles: snap.entries });
+  assert.equal(req.tokenTier, 'premium', 'tokenTier 请求值入 trace');
+  assert.deepEqual(req.profiles_snapshot, snap.entries, '快照随 requested 入 trace');
+  // 未传 tokenTier：键存在但值为 undefined（stripUndefined 清理，lossless JSON）。
+  const req2 = requestedOf({ prompt: 't' });
+  assert.equal('tokenTier' in req2, true);
+  assert.equal(req2.tokenTier, undefined);
+  // 空快照不写 profiles_snapshot 键。
+  const req3 = requestedOf({ prompt: 't' }, { profiles: [] });
+  assert.equal('profiles_snapshot' in req3, false);
 });
 
 // ---- recordGate：追加 + 名单截断 ------------------------------------------------
@@ -170,24 +221,27 @@ function makeBigTrace(detail) {
 test('assertTraceSize：超限时先截 reason 长文本到 200 字符', () => {
   const trace = makeBigTrace('short');
   assertTraceSize(trace);
-  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 3072, '收敛后 ≤ 护栏预算');
+  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 4096, '收敛后 ≤ 护栏预算');
   assert.equal(trace.gates[0].reason.length, 200, 'reason 被截到 200 字符');
 });
 
 test('assertTraceSize：仍超限时截 checks 数组到前 6 条', () => {
   const trace = createDecisionTrace({}, {});
-  const checks = Array.from({ length: 20 }, (_, i) => ({ field: `f${i}`, detail: 'y'.repeat(150) }));
+  // detail 300 字符 × 20 条：第一级截 detail 到 200 后仍 ~4.7KB（> 4096），触发第二级
+  // 截 checks 到 6 条（护栏预算 2026-08 上调至 4096，数据量相应加大）。
+  const checks = Array.from({ length: 20 }, (_, i) => ({ field: `f${i}`, detail: 'y'.repeat(300) }));
   recordGate(trace, { name: 'cost', input: {}, output: { checks }, verdict: 'pass' });
   assertTraceSize(trace);
   assert.ok(trace.gates[0].output.checks.length <= 6, 'checks 收敛到 ≤6 条');
-  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 3072);
+  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 4096);
 });
 
 test('assertTraceSize：仍超限时整体移除 detail（保留结构化键）', () => {
   // 前两级（截 detail/reason 到 200 字符、截 checks 到 6 条）后仍超护栏预算
-  // （多字节 detail 让 200 字符 ≈ 600 字节，6 条即 3600 字节）→ 后续级移除 detail。
+  // （多字节 detail 让 200 字符 ≈ 600 字节，6 条即 3600 字节 + reason 600 + 骨架
+  // ≈ 4350 > 4096）→ 后续级移除 detail。
   const trace = createDecisionTrace({}, {});
-  const checks = Array.from({ length: 6 }, (_, i) => ({ field: `f${i}`, checkedAgainst: 'providerModelList', detail: '账'.repeat(6000) }));
+  const checks = Array.from({ length: 6 }, (_, i) => ({ field: `f${i}`, checkedAgainst: 'providerModelList', detail: '账'.repeat(8000) }));
   recordGate(trace, { name: 'cost', input: {}, output: { checks }, verdict: 'fail', reason: '账'.repeat(500) });
   assertTraceSize(trace);
   for (const check of trace.gates[0].output.checks) {
@@ -195,7 +249,7 @@ test('assertTraceSize：仍超限时整体移除 detail（保留结构化键）'
     assert.ok(check.field !== undefined, '结构化 field 保留');
     assert.ok(check.verdict === undefined || check.checkedAgainst !== undefined, '结构化键保留');
   }
-  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 3072);
+  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 4096);
 });
 
 test('assertTraceSize：settled.calls 6 条完整保留（≤ 护栏预算 3072）', () => {
@@ -205,7 +259,7 @@ test('assertTraceSize：settled.calls 6 条完整保留（≤ 护栏预算 3072�
   assertTraceSize(trace);
   assert.equal(trace.settled.calls.calls.length, 6, '6 条完整保留');
   assert.equal(trace.settled.calls.truncated, false, '不误标截断');
-  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 3072, '≤ 护栏预算');
+  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 4096, '≤ 护栏预算');
 });
 
 test('assertTraceSize：超预算时截 settled.calls 内层数组到前 4 条 + truncated', () => {
@@ -220,7 +274,7 @@ test('assertTraceSize：超预算时截 settled.calls 内层数组到前 4 条 +
   assert.equal(trace.settled.calls.calls.length, 4, 'calls 截到前 4 条');
   assert.equal(trace.settled.calls.truncated, true, 'truncated 标记置真');
   assert.equal(trace.settled.calls.totalCalls, 6, 'totalCalls 保留原总数');
-  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 3072, '收敛到护栏预算内');
+  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 4096, '收敛到护栏预算内');
 });
 
 test('assertTraceSize：未超限的 trace 原样返回、不截断', () => {
@@ -237,7 +291,7 @@ test('assertTraceSize：长 provider/model/preset 标识符也硬收敛到护栏
     { profile: 'r'.repeat(5000), preset: 's'.repeat(5000), provider: 'v'.repeat(5000) },
   );
   assertTraceSize(trace);
-  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 3072, '任意长标识符仍收敛到护栏预算内');
+  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 4096, '任意长标识符仍收敛到护栏预算内');
 });
 
 // ---- createFailureLedger：台账 --------------------------------------------------

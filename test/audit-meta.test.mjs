@@ -59,10 +59,17 @@ test('meta round-trip：计数与 health 落盘，新实例同 dshHome 加载保
     assert.equal(written.lostTelemetry, 1);
     assert.equal(written.lostGovernance, 1);
     assert.equal(written.health, 'degraded');
-    // 新实例：计数与 health 从文件保持。
+    assert.equal(typeof written.last_write_ts, 'number', '落盘带 last_write_ts（§12.4）');
+    // 新实例：计数与 health 从文件保持（last_write_ts 旧文件缺失时回退 0）。
     const b = createEvolutionLedger({ dshHome: t.dir, pluginVersion: '0.3.2', warn: () => {} });
     assert.deepEqual(b.auditState(), { lostTelemetry: 1, lostGovernance: 1, health: 'degraded' });
     assert.equal(b.metaHealth(), 'degraded', 'metaHealth 读取持久化 degraded');
+    // 旧格式 meta（无 last_write_ts）加载不崩、回退 0。
+    writeFileSync(t.metaFile, JSON.stringify({ v: 1, lostTelemetry: 2, lostGovernance: 0, health: 'ok' }), 'utf8');
+    const c = createEvolutionLedger({ dshHome: t.dir, pluginVersion: '0.3.2', warn: () => {} });
+    assert.equal(c.auditState().lostTelemetry, 2, '旧格式兼容读取');
+    c.markGovernanceFailure();
+    assert.equal(typeof readMeta(t.metaFile).last_write_ts, 'number', '再次落盘补上 last_write_ts');
   } finally { t.cleanup(); }
 });
 
