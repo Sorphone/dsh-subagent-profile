@@ -25,7 +25,7 @@ const PATTERNS = [
   { name: '私钥材料', regex: 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' },
 ];
 
-// 作者身份门禁（2026-08-24 教训入库，见 docs/postmortem-qq-email-leak.md）：
+// 作者身份门禁（2026-08-24 教训入库，复盘记录仅本地留存不随包发布）：
 // 将公开的 main 分支历史作者邮箱必须以 @users.noreply.github.com 结尾——
 // 个人邮箱（QQ/163 等）与内网邮箱（如 noreply.<内网 IP>）一律拦截。
 // 单人项目此规则足够；多作者项目请在下方精确白名单里显式列出。
