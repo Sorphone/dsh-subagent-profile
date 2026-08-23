@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { avgCostFor, priceKeyFor, MODEL_AVG_COST } from '../lib/core/prices.mjs';
-import { dispatchCost, counterfactualFor, summarizeCosts, costSummaryFromSummaries } from '../lib/core/cost-evidence.mjs';
+import { dispatchCost, counterfactualFor, summarizeCosts } from '../lib/core/cost-evidence.mjs';
 
 test('prices：A 级单价表与别名归一（flash/pro）', () => {
   assert.equal(avgCostFor('deepseek-v4-flash'), 0.0039);
@@ -70,40 +70,4 @@ test('summarizeCosts：聚合估算成本/继承占比（mixed records）', () =
   assert.equal(s.estimated_saving, 0.0065);
   assert.equal(s.inherit_count, 1);
   assert.equal(s.inherit_ratio, 0.333);
-});
-
-test('costSummaryFromSummaries：全局求和 + 按模型轴聚合', () => {
-  const summaries = {
-    l1: {
-      'preset:standard|model:deepseek-v4-flash': {
-        cost: { estimated_cost: 0.1, estimated_inherit_cost: 0.2, estimated_saving: 0.1, priced: 2, inherit_count: 1, inherit_ratio: 0.5 },
-      },
-      'preset:code|model:deepseek-v4-pro': {
-        cost: { estimated_cost: 0.3, estimated_inherit_cost: 0.3, estimated_saving: 0, priced: 1, inherit_count: 1, inherit_ratio: 1 },
-      },
-    },
-    l2: {
-      'preset:standard|model:deepseek-v4-flash:model:deepseek-v4-flash': { cost: { estimated_cost: 0.1, priced: 2 }, deployments_total: 2 },
-      'preset:code|model:deepseek-v4-pro:model:deepseek-v4-pro': { cost: { estimated_cost: 0.3, priced: 1 }, deployments_total: 1 },
-    },
-  };
-  const s = costSummaryFromSummaries(summaries);
-  assert.equal(s.global.estimated_cost, 0.4);
-  assert.equal(s.global.estimated_inherit_cost, 0.5);
-  assert.equal(s.global.estimated_saving, 0.1);
-  assert.equal(s.global.priced, 3);
-  assert.equal(s.global.inherit_count, 2);
-  assert.equal(s.global.inherit_ratio, 0.667);
-  assert.equal(s.byModel.length, 2);
-  const flash = s.byModel.find((m) => m.model === 'deepseek-v4-flash');
-  assert.equal(flash.deployments, 2);
-  assert.equal(flash.priced, 2);
-  assert.equal(flash.avg_cost, 0.05);
-});
-
-test('costSummaryFromSummaries：空/损坏输入 → 空汇总', () => {
-  const s = costSummaryFromSummaries(null);
-  assert.equal(s.global.estimated_cost, 0);
-  assert.equal(s.global.inherit_ratio, 0);
-  assert.deepEqual(s.byModel, []);
 });
