@@ -25,7 +25,8 @@
     "lib",
     "cordis.patch.yml",
     "presets",
-    "docs",
+    "docs/screenshots",
+    "docs/measured-params.md",
     "README.md",
     "README.zh.md"
   ],
