@@ -68,6 +68,46 @@ function scanPattern(pattern) {
   return hits;
 }
 
+// 提交信息检查（2026-08-24 教训：提交信息曾含 Task/阶段编号、内部文档名与
+// 评审记录 body，推上公开仓库即永久可见）：扫「将公开的 main 分支」的完整
+// 提交消息（含 body），命中内部内容即失败。范围与作者检查一致（main，CI 回退
+// HEAD）。
+const COMMIT_MSG_PATTERNS = [
+  /Task\s*[\dA-Za-z.]+/,          // 内部任务编号（Task 7a / 8.6 / 17/18）
+  /阶段\s*[A-E]/,                 // 内部阶段编号（阶段 C / D+E）
+  /任务\s*\d+/,                   // 任务编号
+  /measured-params|postmortem|成本闭环|v2-spec|首切片|开发期/,  // 内部文档名
+  /内网/,                          // 内网表述
+  /双评审|评审报告/,               // 内部评审流程
+  /测试\s*\d+\s*→\s*\d+/,         // 测试计数演进（内部过程记录）
+];
+function scanCommitMessages() {
+  const hits = [];
+  let ref = 'main';
+  let out;
+  try {
+    out = execFileSync('git', ['log', ref, '--format=%h %B'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  } catch {
+    ref = 'HEAD';
+    try {
+      out = execFileSync('git', ['log', ref, '--format=%h %B'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+    } catch {
+      return hits;
+    }
+  }
+  for (const line of out.split(/\r?\n/)) {
+    if (line.trim() === '') continue;
+    for (const pattern of COMMIT_MSG_PATTERNS) {
+      const m = pattern.exec(line);
+      if (m !== null) {
+        hits.push(`${ref} ${line.trim().slice(0, 120)}（命中「${m[0]}」）`);
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
 // 作者身份检查：扫「将公开的 main 分支」的全部提交作者，逐条校验。
 // 范围取 main（发布分支；含 tags 指向的历史）——内部分支不进公开端，不在
 // 检查范围（如未来要公开须先重写，见本地 postmortem 记录）。
@@ -109,8 +149,12 @@ function main() {
   if (authorHits.length > 0) {
     problems.push(`作者身份门禁：${authorHits.length} 个提交作者邮箱不是 noreply 形式（公开历史会暴露个人邮箱，必须重写或移除）：\n  ${[...new Set(authorHits)].join('\n  ')}`);
   }
+  const msgHits = scanCommitMessages();
+  if (msgHits.length > 0) {
+    problems.push(`提交信息门禁：${msgHits.length} 条提交消息含内部内容（Task/阶段编号、内部文档名、评审记录等，公开即永久可见）：\n  ${[...new Set(msgHits)].join('\n  ')}`);
+  }
   if (problems.length === 0) {
-    console.log('✅ leak-scan 通过：全历史与工作区无敏感模式命中，main 分支作者身份合规。');
+    console.log('✅ leak-scan 通过：全历史与工作区无敏感模式命中，main 分支作者身份与提交信息合规。');
     return;
   }
   console.error('❌ leak-scan 发现敏感信息（公开推送前必须清零）：\n');
