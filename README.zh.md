@@ -122,7 +122,6 @@ dsh-subagent-profile/
 ├── .gitea/workflows/ci.yml       # bare-CI（Gitea Actions；需服务器装 Act runner）
 ├── package.json                  # 元数据、files 发布白名单、exports（test / test:bare / preflight scripts）
 ├── scripts/
-│   ├── release.mjs               # 发布脚本（版本 bump / tag 校验）
 │   ├── preflight.mjs             # preflight：preset 树对账 + 无硬编码版本徽章（零依赖）
 │   └── leak-scan.mjs             # 公开发布门禁：全历史 + 工作区敏感模式扫描
 ├── docs/

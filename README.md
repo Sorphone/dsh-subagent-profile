@@ -122,7 +122,6 @@ dsh-subagent-profile/
 ├── .gitea/workflows/ci.yml       # bare-CI (Gitea Actions; needs an Act runner on the server)
 ├── package.json                  # metadata, files whitelist, exports (test / test:bare / preflight scripts)
 ├── scripts/
-│   ├── release.mjs               # release helper (version bump / tag checks)
 │   ├── preflight.mjs             # preflight: preset-tree reconciliation + no hardcoded version badge (zero-dep)
 │   └── leak-scan.mjs             # public-release gate: scans all history + worktree for sensitive patterns
 ├── docs/
