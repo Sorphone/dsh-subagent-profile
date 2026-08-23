@@ -4,7 +4,7 @@
 // git）。注意：只扫已提交内容（git log 语义），未提交/暂存内容不在扫描范围；
 // 发布脚本要求干净工作区，门禁执行时工作区必为已提交状态。
 //
-// 作者身份门禁（2026-08 教训：公开历史曾出现个人 QQ 邮箱与内网 IP 邮箱）：
+// 作者身份门禁（2026-08 教训：公开历史曾出现非 noreply 提交身份）：
 // 另扫「将公开的 main 分支」提交作者，邮箱非 @users.noreply.github.com 结尾
 // 即失败。leak-scan 的 -G 内容扫描看不到作者元数据，必须显式检查。
 
@@ -25,17 +25,16 @@ const PATTERNS = [
   { name: 'api key 赋值', regex: "api[_-]?key\\s*[:=]\\s*[^\\s\"']+" },
   { name: '长 token 赋值', regex: '(token|access[_-]?token)\\s*[:=]\\s*[A-Za-z0-9._-]{16,}' },
   { name: '私钥材料', regex: 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY' },
-  // 内部标识词（已删分支名 / 内网组织名）：任何公开内容不得出现这些词。
+  // 内部标识词：任何公开内容不得出现已废弃的内部标识（历史教训）。
   // 排除 scripts/leak-scan.mjs 自身——本文件的说明性注释会提及它们（自指）。
-  // 注：`v2-midterm` 不在此列——.gitea/workflows/ci.yml 的触发分支配置是功能
-  // 必需，且历史 README 已有残留（连删除它的提交都会被 -G 命中），无法以内容
-  // 门禁拦截；该词防再犯靠提交纪律与本地 postmortem 记录。
+  // 注：个别仍具功能必要性的标识词（如 CI 触发分支配置）不在此列，防再犯
+  // 靠提交纪律与本地复盘记录。
   { name: '内部标识词（内部分支/组织名）', regex: 'v2-first-slice|main-legacy|DarkGitea', exclude: ['scripts/leak-scan.mjs'] },
 ];
 
 // 作者身份门禁（2026-08-24 教训入库，复盘记录仅本地留存不随包发布）：
 // 将公开的 main 分支历史作者邮箱必须以 @users.noreply.github.com 结尾——
-// 个人邮箱（QQ/163 等）与内网邮箱（如 noreply.<内网 IP>）一律拦截。
+// 个人邮箱与内网邮箱一律拦截。
 // 单人项目此规则足够；多作者项目请在下方精确白名单里显式列出。
 const AUTHOR_EMAIL_SUFFIX = '@users.noreply.github.com';
 // 可选精确白名单（邮箱全匹配；留空表示只按后缀规则）。扩展示例：
@@ -110,7 +109,7 @@ function scanCommitMessages() {
 
 // 作者身份检查：扫「将公开的 main 分支」的全部提交作者，逐条校验。
 // 范围取 main（发布分支；含 tags 指向的历史）——内部分支不进公开端，不在
-// 检查范围（如未来要公开须先重写，见本地 postmortem 记录）。
+// 检查范围（如未来要公开须先重写，见本地复盘记录）。
 // CI 浅克隆可能没有 main 分支：`git log main` 失败时回退 `git log HEAD`
 // （CI 只跑 main 与开发分支的 push，检查仍有效）。
 function scanAuthors() {
