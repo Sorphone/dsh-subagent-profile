@@ -1,14 +1,11 @@
-// index.mjs — dsh-subagent-profile host side (formal plugin bundle).
-// Converted from prototype/subagent-profile/host.plugin.js (the dynamic-plugin
-// `code.host` body). V2.0-mid 12-module split: the harness-only APIs
-// (registerTool/defineTool/handle) map to lib/shims.mjs, and the wiring blocks
-// live in lib/ (catalog / presets-sync / profiles-store / cost-guard /
-// whitelist / intersection / delegation / pure / shims / http-routes /
-// profile-provider / dispatch-tool). This file only assembles them.
-//
-// Task 8: apply 的装配块抽模块级辅助函数（syncBundledPresetsToHome /
-// provideProfileService / registerSystemPromptSections / registerSettingsRoutes），
-// section 文本与门控逐字保留。`enabled` 始终经 getter 注入，门控读取当前值。
+// index.mjs — dsh-subagent-profile 宿主侧正式插件 bundle（只做装配）。
+// 源自原型动态插件 `code.host` 主体；宿主导入面（registerTool/defineTool/
+// handle）收敛在 lib/shims.mjs，装配块按模块拆分驻留 lib/（catalog /
+// presets-sync / profiles-store / cost-guard / whitelist / intersection /
+// delegation / pure / shims / http-routes / profile-provider / dispatch-tool）。
+// apply 的装配辅助函数（syncBundledPresetsToHome / provideProfileService /
+// registerSystemPromptSections / registerSettingsRoutes）保持 section 文本与
+// 门控逐字不变；`enabled` 始终经 getter 注入，门控读取当前值。
 
 import { join } from 'node:path';
 import { syncBundledPresets } from './lib/presets-sync.mjs';
@@ -20,7 +17,7 @@ import { createDispatchTool } from './lib/dispatch-tool.mjs';
 export const name = 'dsh-subagent-profile';
 export const inject = ['subagents', 'tools', 'agents'];
 
-// 1c. Self-install the bundled "orchestrator" agent preset into the DSH
+// Self-install the bundled "orchestrator" agent preset into the DSH
 // agent-presets root so the mode appears in the new-session picker without
 // manual copying (mirrors the shipped dsh-liangshen self-install). Idempotent:
 // byte-identical trees are skipped; a bundle change rewrites the preset — the
@@ -37,7 +34,7 @@ function syncBundledPresetsToHome(ctx) {
   }
 }
 
-// C: subagent-profiles service over the store's per-apply profiles Map —
+// subagent-profiles service over the store's per-apply profiles Map —
 // lets the outside world enumerate and extend the registry without touching
 // internals.
 function provideProfileService(ctx, store) {
@@ -67,11 +64,11 @@ function provideProfileService(ctx, store) {
   });
 }
 
-// §8.1 系统提示门控：两段 profile-mode section **只在当前席 Agent 是编排者
-// 预设（orchestrator）**时注入，从而消除从 standard/code/minimal 等不派发
-// 会话上的每请求固定泄漏。判据（以源码为准确认，见 test/README.md）：
-// 主判据 composedPreset(agentCtx)==='orchestrator'；否决 schemas(agent) 明确
-// 不含 dispatch → 必空；回退 无 agentPresets → 保守不注入。
+// 系统提示门控：两段 profile-mode section 只在当前会话 Agent 是编排者预设
+// （orchestrator）时注入，从而消除从 standard/code/minimal 等不派发会话上的
+// 每请求固定泄漏。判据（以源码为准确认，见 test/README.md）：主判据
+// composedPreset(agentCtx)==='orchestrator'；否决 schemas(agent) 明确不含
+// dispatch → 必空；回退 无 agentPresets → 保守不注入。
 function sectionGatePasses(ctx, getEnabled, context) {
   if (!getEnabled()) return false;
   // 否决（防御性）：schemas(agent) 明确不含 dispatch → 必空。
@@ -96,7 +93,7 @@ function sectionGatePasses(ctx, getEnabled, context) {
 
 // dispatch:profiles section 文本。引号引用：description 套引号；为空时显示
 // 占位符（不套引号）。压平在存储层完成（sanitizeProfile），此处仅负责显示层包裹。
-// §8.3 一行行为规则进门控 profiles section（非常开 persona 注入）。
+// 门控 profiles section 内附一行行为规则提示（非开放的 persona 注入）。
 function profileSectionText(store, gate, context) {
   if (!gate(context)) return '';
   const rows = [...store.profiles.values()]
@@ -110,12 +107,12 @@ function profileSectionText(store, gate, context) {
   return `Available dispatch profiles (dispatch.profile):\n${rows.join('\n')}\n${note}`;
 }
 
-// orchestrator:mode section 文本（逐字保留；§8.1 与 profiles 同门控）。
+// orchestrator:mode section 文本（逐字保留；与 profiles 同门控）。
 const ORCHESTRATOR_MODE_TEXT = '本机已安装 dsh-subagent-profile 插件的「编排者模式」agent preset：新建会话的预设选择器中可选「编排者模式」。该模式把 Agent 定位为主协调者——拆解任务后按场景用 dispatch（内置 swap-standard=标准编码、researcher=调研检索，可在「子 Agent 方案」设置页自定义）与 subagent/subagent_fork/workflow 委派给子 Agent，再整合结果。preset 文件由插件维护于 ~/.dsh/.agent-presets，安装/升级时自动同步；用户提到「编排者模式 / orchestrator / 主协调模式」时即指本预设，请据此协作。';
 
-// C: directory section rendering the available profiles (systemPrompt's
+// Directory section rendering the available profiles (systemPrompt's
 // section `text` accepts a function, as the shipped tool-subagent proves).
-// §8.1 gate: `enabled` must be read live (getter), so /set-enabled toggles
+// gate: `enabled` must be read live (getter), so /set-enabled toggles
 // apply immediately without a restart.
 function registerSystemPromptSections(ctx, store, getEnabled) {
   const pluginSystemPrompt = ctx.get('systemPrompt');
@@ -127,7 +124,7 @@ function registerSystemPromptSections(ctx, store, getEnabled) {
     text: (context) => profileSectionText(store, gate, context),
   });
   // Announce the self-installed orchestrator preset so the current agent
-  // knows the mode exists and can point the user to it. §8.1: gated the same
+  // knows the mode exists and can point the user to it. Gated the same
   // way — only a dispatch-capable agent sees it.
   pluginSystemPrompt.section({
     name: 'orchestrator:mode',
@@ -136,7 +133,7 @@ function registerSystemPromptSections(ctx, store, getEnabled) {
   });
 }
 
-// 1c. HTTP loopback routes for the Client settings UI (webServer.register ↔
+// HTTP loopback routes for the Client settings UI (webServer.register ↔
 // client fetch; JSON only) — the routes themselves live in
 // lib/http-routes.mjs (imported above); this wiring only injects the
 // per-apply deps. webServer is optional — a headless deployment keeps the
@@ -161,17 +158,18 @@ function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool) {
 }
 
 export async function apply(ctx) {
-  // 0/1. Enable/disable switch (default on, runtime-toggled by the settings
+  // Enable/disable switch (default on, runtime-toggled by the settings
   // page, persisted across restarts) + profile registry — lib/profiles-store
   // .mjs: createProfileStore. loadProfiles runs once at startup via the
   // explicit call below (the factory itself does not auto-load).
   const store = createProfileStore({ dshHome: dshHome(), logger: ctx.logger });
   let enabled = store.loadEnabled();
   store.loadProfiles();
-  // 1c. Self-install the bundled "orchestrator" preset (idempotent, fail-soft).
+  // Self-install the bundled "orchestrator" preset (idempotent, fail-soft).
   syncBundledPresetsToHome(ctx);
-  // 4. `dispatch` tool — lib/dispatch-tool.mjs: defineTool block (schema +
-  // execute), the R1 schema lock and the syncTool register/unregister logic.
+  // `dispatch` tool — lib/dispatch-tool.mjs: defineTool block (schema +
+  // execute), the result-schema consistency lock and the syncTool
+  // register/unregister logic.
   // Created BEFORE the HTTP inject so createHttpRoutes can capture
   // dispatch.syncTool (/set-enabled).
   const dispatch = createDispatchTool({
@@ -182,11 +180,11 @@ export async function apply(ctx) {
     logger: ctx.logger,
     subagents: ctx.subagents,
   });
-  // C: subagent-profiles service over the store's per-apply profiles Map.
+  // subagent-profiles service over the store's per-apply profiles Map.
   provideProfileService(ctx, store);
-  // C: gated system-prompt sections (profile directory + orchestrator mode).
+  // Gated system-prompt sections (profile directory + orchestrator mode).
   registerSystemPromptSections(ctx, store, () => enabled);
-  // 3. `profile` subagent provider — lib/profile-provider.mjs:
+  // `profile` subagent provider — lib/profile-provider.mjs:
   // createProfileProvider registers the provider and returns the disposer.
   const disposeProvider = createProfileProvider({
     subagents: ctx.subagents,
@@ -195,7 +193,7 @@ export async function apply(ctx) {
     logger: ctx.logger,
   });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
-  // 1c. HTTP loopback routes for the Client settings UI — lib/http-routes.mjs.
+  // HTTP loopback routes for the Client settings UI — lib/http-routes.mjs.
   registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool);
   // Teardown: unregister the dispatch tool (if still registered).
   ctx.effect(() => dispatch.dispose);

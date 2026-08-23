@@ -1,5 +1,5 @@
 // test/pure.test.mjs — true unit tests for the import-free helpers extracted
-// into lib/pure.mjs (V2 T0-2). These are the only pure module functions; they
+// into lib/pure.mjs. These are the only pure module functions; they
 // carry no @deepseek-ai dependency and no fs side effects.
 
 import { test } from 'node:test';

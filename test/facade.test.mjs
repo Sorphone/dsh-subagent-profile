@@ -1,4 +1,4 @@
-// test/facade.test.mjs — V2 Task 6a: the lib/shims.mjs facade surface.
+// test/facade.test.mjs — the lib/shims.mjs facade surface.
 //
 // In this environment the @deepseek-ai packages are junctions that RESOLVE, so
 // the real functions win the fail-soft path and the guard-type statics load.
@@ -6,8 +6,8 @@
 // (a) asserts every exported helper is a callable function (the real shims that
 // index.mjs now imports), and (b) drives the LOCAL fallback implementations
 // (exported as `__fallbacks`) directly, locking the degraded semantics that a
-// missing/renamed host symbol would select. See the Task 6a fallback-semantics
-// report in lib/shims.mjs and the plan's §9.2.
+// missing/renamed host symbol would select. See lib/shims.mjs for the
+// fallback semantics.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

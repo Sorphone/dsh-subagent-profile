@@ -1,4 +1,4 @@
-// test/cost-guard.test.mjs — V2 安全 P0-b（SPEC §7.3）：
+// test/cost-guard.test.mjs — cost guard 测试：
 //   * assertHardLimits —— 硬上限（maxTokens/maxDepth）纯函数单测。硬上限已从
 //     assertCostGuard 的 llm 依赖分支移出为 always-on，故不随 llm 缺失失效；
 //   * llm 缺失 / provider 目录为空 + allowFailOpen 分支 —— 经 fake ctx 的

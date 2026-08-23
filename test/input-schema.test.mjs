@@ -1,5 +1,5 @@
-// test/input-schema.test.mjs — V2 安全 P0-a 统一输入 schema 的纯函数单测
-// （SPEC §7.2 / §12.1）。这些用例直接测 lib/pure.mjs 的 sanitizeProfile，不触碰
+// test/input-schema.test.mjs — 统一输入 schema 的纯函数单测。
+// 这些用例直接测 lib/pure.mjs 的 sanitizeProfile，不触碰
 // index.mjs / fs —— 与 loadProfiles、/add 写路径共用同一个纯函数。
 
 import { test } from 'node:test';
@@ -22,7 +22,7 @@ test('sanitizeProfile: 非对象根返回空 clean + 一条根警告', () => {
   }
 });
 
-test('sanitizeProfile: 自带 __proto__ 键被丢弃，不产生原型污染（P1-1）', () => {
+test('sanitizeProfile: 自带 __proto__ 键被丢弃，不产生原型污染', () => {
   // JSON.parse 可产生 OWN __proto__ 属性；过去 default 透传会改写 clean 的原型，
   // 使 clean.toolFilter 沿原型链解析到攻击者值。白名单 + 空原型后必须被丢弃。
   const { clean, warnings } = sanitizeProfile(JSON.parse('{"id":"x","__proto__":{"toolFilter":{"allow":["boom"]}}}'));
@@ -33,7 +33,7 @@ test('sanitizeProfile: 自带 __proto__ 键被丢弃，不产生原型污染（P
   assert.ok(warnings.some((w) => w.field === '__proto__' && /未知字段已忽略/.test(w.reason)));
 });
 
-test('sanitizeProfile: constructor / prototype 键同样被丢弃（P1-1）', () => {
+test('sanitizeProfile: constructor / prototype 键同样被丢弃', () => {
   const { clean, warnings } = sanitizeProfile(JSON.parse('{"id":"x","constructor":{"prototype":{"polluted":true}},"prototype":{"x":1}}'));
   assert.equal(Object.getPrototypeOf(clean), null);
   assert.equal(clean.constructor, undefined, 'constructor 不得被复制');
