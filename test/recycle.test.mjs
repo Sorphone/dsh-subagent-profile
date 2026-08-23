@@ -22,7 +22,7 @@ const mod = await import('../index.mjs');
 
 test('pruneBlocks: pruner 存在 → 返回 pruneContent 结果（裁剪生效）', () => {
   const blocks = [{ type: 'text', text: 'long'.repeat(3000) }];
-  const pruner = { pruneContent: (b) => [{ type: 'text', text: 'PRUNED' }] };
+  const pruner = { pruneContent: () => [{ type: 'text', text: 'PRUNED' }] };
   assert.deepEqual(pruneBlocks(blocks, pruner), [{ type: 'text', text: 'PRUNED' }]);
 });
 
