@@ -13,6 +13,13 @@
  *   - pnpm 已登录,且配置了可发布 npm 的凭证(granular token + Bypass 2FA,
  *     写入 %LOCALAPPDATA%\pnpm\config\auth.ini 或 ~/.npmrc)
  *   - GitHub Release 由脚本输出的草稿在网页上手动发布(或装 gh 后一条命令)
+ *
+ * 发布前必读（2026-08-24 起每次发布前必须向用户提供以下三样、确认无误后再执行）:
+ *   1. 提交人信息: git config user.name / user.email（必须为 noreply 身份,
+ *      历史教训: 个人邮箱与内网邮箱曾随公开历史泄露,见本地 postmortem 记录）
+ *   2. 提交信息: git log github/main..main 的完整提交清单 + 作者唯一性核验
+ *   3. 提交前审核报告: leak-scan（内容+作者身份+内部标识词）+ preflight +
+ *      测试套件 + npm 包实包敏感扫描 + 公开面内网线索扫描,全部通过
  */
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
