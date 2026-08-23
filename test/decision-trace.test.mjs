@@ -231,6 +231,15 @@ test('assertTraceSize：未超限的 trace 原样返回、不截断', () => {
   assert.equal(trace.gates[0].reason, 'ok');
 });
 
+test('assertTraceSize：长 provider/model/preset 标识符也硬收敛到护栏预算（H3）', () => {
+  const trace = createDecisionTrace(
+    { parentPreset: 'p'.repeat(5000), parentModel: 'm'.repeat(5000) },
+    { profile: 'r'.repeat(5000), preset: 's'.repeat(5000), provider: 'v'.repeat(5000) },
+  );
+  assertTraceSize(trace);
+  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 3072, '任意长标识符仍收敛到护栏预算内');
+});
+
 // ---- createFailureLedger：台账 --------------------------------------------------
 
 test('ledger：record/get 返回副本、take 读后清空', () => {

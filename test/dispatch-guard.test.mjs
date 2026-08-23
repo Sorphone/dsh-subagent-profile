@@ -83,6 +83,16 @@ test('guard resetParent：只清该父的并发与 token 键，其它父不受�
   assert.equal(guard.acquire('p2').ok, false, '空 id resetParent 为 no-op');
 });
 
+test('guard recordTokens：resetParent 后不重插 tokenTotals 键（H2 防无界增长）', () => {
+  const guard = createDispatchGuard({ maxConcurrent: 1, maxParentTokens: 100 });
+  guard.recordTokens('p', 50);
+  guard.resetParent('p');
+  // dispose 后 recordTokens 为 no-op：不再把 tokenTotals 键重插回来，累计不复活。
+  assert.equal(guard.recordTokens('p', 50), false, 'dispose 后 recordTokens 不累计');
+  const a = guard.acquire('p');
+  assert.equal(a.ok, true, 'dispose 后 acquire 不被已释放的 token 累计误拒');
+});
+
 test('guard track/untrack/cancelAll：每项 cancel 恰好调用一次，untrack 后不调', () => {
   const guard = createDispatchGuard();
   const calls = [];

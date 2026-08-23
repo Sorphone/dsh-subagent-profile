@@ -11,12 +11,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   computeSummaries,
   parseDispatchRecords,
+  refreshSummaries,
   writeSummaries,
   weightedSuccess,
   adoptStatus,
@@ -235,5 +236,36 @@ test('writeSummaries：覆盖旧文件（同路径再写）不 throw', () => {
     assert.equal(res.persisted, true);
     const parsed = JSON.parse(readFileSync(file, 'utf8'));
     assert.deepEqual(parsed.l1, { b: 2 });
+  } finally { t.cleanup(); }
+});
+
+test('refreshSummaries：读 dispatch.jsonl → computeSummaries → writeSummaries（T1 生产聚合）', () => {
+  const t = tmpDir();
+  try {
+    const evoDir = join(t.dir, 'subagent-evolution');
+    mkdirSync(evoDir, { recursive: true });
+    const dispatchFile = join(evoDir, 'dispatch.jsonl');
+    const summariesFile = join(evoDir, 'summaries.json');
+    // 写两行台账：一条 completed + 一条损坏行（末尾不带换行，避免尾随空行计 skipped）。
+    writeFileSync(dispatchFile, `${JSON.stringify(FIXTURE_RECORDS[0])}\nnot-json`, 'utf8');
+    const res = refreshSummaries({ dispatchFile, summariesFile });
+    assert.equal(res.persisted, true);
+    assert.equal(res.records, 1, '只有 1 条有效记录参与聚合');
+    assert.equal(res.skippedLines, 1, '损坏行计数');
+    assert.ok(existsSync(summariesFile), 'summaries.json 被生成');
+    const parsed = JSON.parse(readFileSync(summariesFile, 'utf8'));
+    assert.equal(parsed.v, 1);
+    assert.ok(parsed.l1[STANDARD_L1_KEY], 'L1 聚合按 profile 键生成');
+  } finally { t.cleanup(); }
+});
+
+test('refreshSummaries：dispatch.jsonl 缺失返回 skipped:no-ledger（不写空 summaries）', () => {
+  const t = tmpDir();
+  try {
+    const summariesFile = join(t.dir, 'subagent-evolution', 'summaries.json');
+    const res = refreshSummaries({ dispatchFile: join(t.dir, 'subagent-evolution', 'dispatch.jsonl'), summariesFile });
+    assert.equal(res.persisted, false);
+    assert.equal(res.skipped, 'no-ledger');
+    assert.ok(!existsSync(summariesFile), '无台账不写 summaries.json');
   } finally { t.cleanup(); }
 });

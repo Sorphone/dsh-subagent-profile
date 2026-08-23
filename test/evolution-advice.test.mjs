@@ -187,6 +187,20 @@ test('advice section: 非 system 候选出现在建议生成路径 → warn 留�
   } finally { iso.restore(); iso.teardown(); }
 });
 
+test('advice section: N<3 的非 system 候选组不抛、不 warn（校验在建议判定之后，F4）', async () => {
+  const iso = makeIsolatedDshHome();
+  try {
+    // N=2 < minN=3：不产出建议，因此不触发 system-trust 校验（F4：校验先于判定会误抛）。
+    writeSummariesFixture(iso.dir, { 'preset:custom': makeEntry({ n: 2, completed: 0, failed: 2, killed: 0, weightedSuccess: 0 }) });
+    const { routes, records } = await setupApp({ agentPresets: ORCHESTRATOR_STUB });
+    await postAdvice(routes, true);
+    const advice = records.sectionCalls.find((s) => s.name === 'evolution:advice');
+    const text = advice.text({ agent: { ctx: {} } });
+    assert.equal(text, '', 'N<3 组不产出建议，注入为空');
+    assert.ok(!records.logs.warn.some((args) => String(args).includes('system-trust 白名单')), 'N<3 组不触发 system-trust 校验');
+  } finally { iso.restore(); iso.teardown(); }
+});
+
 test('POST /set-evolution-advice: 切换开关并持久化到 state.json（保留 enabled）', async () => {
   const iso = makeIsolatedDshHome();
   try {

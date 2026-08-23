@@ -1,4 +1,4 @@
-﻿// test/input-schema.test.mjs — 统一输入 schema 的纯函数单测。
+// test/input-schema.test.mjs — 统一输入 schema 的纯函数单测。
 // 这些用例直接测 lib/core/pure.mjs 的 sanitizeProfile，不触碰
 // index.mjs / fs —— 与 loadProfiles、/add 写路径共用同一个纯函数。
 
@@ -150,5 +150,12 @@ test('其余字段（id / preset / enabled 等）原样透传', () => {
   assert.equal(clean.provider, 'x');
   assert.equal(clean.enabled, true);
   assert.equal(clean.builtin, true);
+  assert.equal(warnings.length, 0);
+});
+
+test('id/preset：回车被压平为空格（H1 提示注入面），无警告', () => {
+  const { clean, warnings } = sanitizeProfile({ id: 'bad\nid', preset: 'standard\r\nx' });
+  assert.equal(clean.id, 'bad id');
+  assert.equal(clean.preset, 'standard x');
   assert.equal(warnings.length, 0);
 });

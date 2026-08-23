@@ -8,7 +8,7 @@
 // registerSystemPromptSections / registerSettingsRoutes）保持 section 文本与
 // 门控逐字不变；`enabled` 始终经 getter 注入，门控读取当前值。
 
-import { rmSync } from 'node:fs';
+import { renameSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { syncBundledPresets } from './lib/core/presets-sync.mjs';
@@ -23,7 +23,7 @@ import { createEvolutionLedger } from './lib/core/evolution-ledger.mjs';
 import { createEscapeStore, recordEscapeAllowProvider } from './lib/core/escape.mjs';
 import { tierSortKey } from './lib/core/pure.mjs';
 import { resolveWhitelist, FALLBACK_WHITELIST } from './lib/core/whitelist.mjs';
-import { buildAdviceText } from './lib/core/evolution-summary.mjs';
+import { buildAdviceText, refreshSummaries } from './lib/core/evolution-summary.mjs';
 
 export const name = 'dsh-subagent-profile';
 export const inject = ['subagents', 'tools', 'agents'];
@@ -46,15 +46,18 @@ function syncBundledPresetsToHome(ctx) {
   }
 }
 
-// 卸载清理：删除本插件持久化的 3 个数据文件 + 自装的 orchestrator 预设目录（只删
-// 本插件拥有的 orchestrator 目录，不碰 .agent-presets 下其它插件/用户的目录）。复活
-// 口径：重新安装/启动插件会经 syncBundledPresetsToHome 重新同步预设，数据文件重新
-// 生成。fail-soft：删失败不抛（卸载不应因清理失败而阻断）。
+// 卸载清理：把本插件持久化的 3 个数据文件 + 自装的 orchestrator 预设目录改名备份
+// （只动本插件拥有的 orchestrator 目录，不碰 .agent-presets 下其它插件/用户的目录）。
+// 改为「改名到 <name>.removed-<ts>」而非 rmSync 删除：ctx.effect 的清理器在禁用/热
+// 重载/进程退出时都可能触发，硬删除会静默丢失用户 profiles/state/失败台账（S1）。
+// 备份保留可恢复副本；规范路径被清空，重装/重启后经 syncBundledPresetsToHome 重新
+// 同步预设、数据文件按需重新生成。fail-soft：改名失败不抛（卸载不应因清理失败而阻断）。
 function removeOwnedData(home) {
+  const stamp = Date.now();
   for (const file of ['subagent-profiles.json', 'subagent-profiles.state.json', 'subagent-profiles.failed-traces.json']) {
-    try { rmSync(join(home, file), { force: true }); } catch { /* best effort */ }
+    try { renameSync(join(home, file), join(home, `${file}.removed-${stamp}`)); } catch { /* 源不存在（正常首启）等：best effort */ }
   }
-  try { rmSync(join(home, '.agent-presets', 'orchestrator'), { recursive: true, force: true }); } catch { /* best effort */ }
+  try { renameSync(join(home, '.agent-presets', 'orchestrator'), join(home, '.agent-presets', `orchestrator.removed-${stamp}`)); } catch { /* best effort */ }
 }
 
 // 卸载接线：注销 dispatch 工具（若仍注册）+ 清空失败台账 + 级联取消在途派发 +
@@ -86,10 +89,10 @@ function provideProfileService(ctx, store) {
   ctx.provide('subagent-profiles', {
     register(profile) {
       if (!profile || typeof profile.id !== 'string' || profile.id.length === 0) {
-        throw new Error('subagent-profiles: profile id must be a non-empty string');
+        throw new Error('subagent-profiles: profile id 必须为非空字符串');
       }
       if (store.profiles.has(profile.id)) {
-        throw new Error(`subagent-profiles: profile "${profile.id}" is already registered`);
+        throw new Error(`subagent-profiles: profile "${profile.id}" 已注册（id 需唯一）`);
       }
       const registered = { ...profile };
       store.profiles.set(profile.id, registered);
@@ -215,7 +218,7 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
 // (listen) is async and may not be ready when this plugin's inject deps
 // resolve, so register inside an inject sub-scope that waits for it
 // (ctx.get would read undefined at apply time).
-function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, getAudit, getEvolutionAdvice, setEvolutionAdvice, getEscapeEnabled, setEscapeEnabled, escape) {
+function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, getAudit, getEvolutionAdvice, setEvolutionAdvice, getEscapeEnabled, setEscapeEnabled, escape, refreshAdvice) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(createHttpRoutes({
       webServer: scope.webServer,
@@ -231,6 +234,7 @@ function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, ca
       getEscapeEnabled,
       setEscapeEnabled,
       escape,
+      refreshAdvice,
       logger: ctx.logger,
     }), 'dsh-subagent-profile: settings routes');
   });
@@ -308,11 +312,18 @@ export async function apply(ctx) {
   const dispatch = createDispatch(ctx, store, catalog, ledger, guard, evoLedger, escapeCtl.getEscapeSet, () => enabled);
   provideProfileService(ctx, store);
   const adviceWhitelist = await resolveAdviceWhitelist(ctx);
-  const adviceEnv = { summariesFile: join(home, 'subagent-evolution', 'summaries.json'), whitelist: adviceWhitelist, logger: ctx.logger };
+  const adviceEnv = { summariesFile: join(home, 'subagent-evolution', 'summaries.json'), dispatchFile: join(home, 'subagent-evolution', 'dispatch.jsonl'), whitelist: adviceWhitelist, logger: ctx.logger };
+  // 生产聚合触发点（T1 修复）：/options/refresh 手动刷新时重算 summaries.json，让
+  // evolution:advice 有初始生成路径（原先 computeSummaries/writeSummaries 只被测试调用）。
+  const refreshAdvice = () => refreshSummaries({
+    dispatchFile: join(home, 'subagent-evolution', 'dispatch.jsonl'),
+    summariesFile: join(home, 'subagent-evolution', 'summaries.json'),
+    logger: ctx.logger,
+  });
   registerSystemPromptSections(ctx, store, () => enabled, () => evolutionAdvice, adviceEnv);
   const disposeProvider = createProfileProvider({ subagents: ctx.subagents, store, getEnabled: () => enabled, logger: ctx.logger, catalog, getEscapeSet: escapeCtl.getEscapeSet, recordEscapeAllowProvider: escapeCtl.recordEscapeAllowProvider });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
   // HTTP loopback routes for the Client settings UI — lib/core/http-routes.mjs.
-  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape);
+  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice);
   registerTeardown(ctx, dispatch, ledger, guard, home);
 }
