@@ -31,5 +31,3 @@ node --test "test/**/*.test.mjs"
 
 `characterization.test.mjs` 为 `apply()` 可观察行为的快照；宿主升级或有意改动时，须按新服务签名
 重核 `test/harness/ctx.mjs` 的假上下文与断言，并在提交信息中说明快照更新的原因。
-
-设计依据见 `docs/V2-SPEC.md` §6.4 测试矩阵。

@@ -35,5 +35,3 @@ node --test "test/**/*.test.mjs"
 `characterization.test.mjs` is a snapshot of `apply()`; on a host upgrade or an intentional change,
 re-verify the fake ctx surfaces and the assertions against the new service signatures, and state the
 reason in the commit message.
-
-Design basis: `docs/V2-SPEC.md` §6.4 test matrix.
