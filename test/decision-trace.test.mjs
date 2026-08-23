@@ -84,13 +84,24 @@ test('finalizeTrace：只写传入的 effective/execution/settled，缺省不写
 
 // ---- requestedOf / effectiveMeta / hardLimitChecks / recordApprovalGate ---------
 
-test('requestedOf：不记 prompt 原文，只记 persona/toolFilter 存在性布尔', () => {
+test('requestedOf：不记 prompt 原文，只记 persona/toolFilter 存在性布尔与 prompt 摘要', () => {
   const out = requestedOf({ profile: 'p', preset: 'standard', persona: 'x', toolFilter: { deny: ['a'] }, envelope: true, prompt: 'SECRET PROMPT' });
   assert.equal(out.prompt, undefined, 'prompt 原文绝不进 requested');
   assert.equal(out.persona_present, true);
   assert.equal(out.toolFilter_present, true);
   assert.equal(out.envelope, true);
   assert.equal(out.profile, 'p');
+  assert.equal(out.prompt_excerpt, 'SECRET PROMPT', 'prompt 摘要存在（≤200 字符全量）');
+  assert.equal(out.prompt_truncated, undefined, '未截断时不带截断标记');
+});
+
+test('requestedOf：超长 prompt 摘要截断 200 字符 + 截断标记，原文不泄漏', () => {
+  const longPrompt = 'x'.repeat(500);
+  const out = requestedOf({ prompt: longPrompt });
+  assert.equal(out.prompt_excerpt.length, 200, '摘要截断到 200 字符');
+  assert.equal(out.prompt_excerpt, 'x'.repeat(200));
+  assert.equal(out.prompt_truncated, true, '带截断标记');
+  assert.equal(out.prompt, undefined, '原文仍不进 requested');
 });
 
 test('effectiveMeta：组装生效值 + ignored 列表', () => {
@@ -159,7 +170,7 @@ function makeBigTrace(detail) {
 test('assertTraceSize：超限时先截 reason 长文本到 200 字符', () => {
   const trace = makeBigTrace('short');
   assertTraceSize(trace);
-  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 2048, '收敛后 ≤ 2048 字节');
+  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 3072, '收敛后 ≤ 护栏预算');
   assert.equal(trace.gates[0].reason.length, 200, 'reason 被截到 200 字符');
 });
 
@@ -169,12 +180,12 @@ test('assertTraceSize：仍超限时截 checks 数组到前 6 条', () => {
   recordGate(trace, { name: 'cost', input: {}, output: { checks }, verdict: 'pass' });
   assertTraceSize(trace);
   assert.ok(trace.gates[0].output.checks.length <= 6, 'checks 收敛到 ≤6 条');
-  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 2048);
+  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 3072);
 });
 
 test('assertTraceSize：仍超限时整体移除 detail（保留结构化键）', () => {
-  // 前两级（截 detail/reason 到 200 字符、截 checks 到 6 条）后仍超 2048 字节
-  // （多字节 detail 让 200 字符 ≈ 600 字节，6 条即 3600 字节）→ 第三级移除 detail。
+  // 前两级（截 detail/reason 到 200 字符、截 checks 到 6 条）后仍超护栏预算
+  // （多字节 detail 让 200 字符 ≈ 600 字节，6 条即 3600 字节）→ 后续级移除 detail。
   const trace = createDecisionTrace({}, {});
   const checks = Array.from({ length: 6 }, (_, i) => ({ field: `f${i}`, checkedAgainst: 'providerModelList', detail: '账'.repeat(6000) }));
   recordGate(trace, { name: 'cost', input: {}, output: { checks }, verdict: 'fail', reason: '账'.repeat(500) });
@@ -184,7 +195,32 @@ test('assertTraceSize：仍超限时整体移除 detail（保留结构化键）'
     assert.ok(check.field !== undefined, '结构化 field 保留');
     assert.ok(check.verdict === undefined || check.checkedAgainst !== undefined, '结构化键保留');
   }
-  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 2048);
+  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 3072);
+});
+
+test('assertTraceSize：settled.calls 6 条完整保留（≤ 护栏预算 3072）', () => {
+  const trace = createDecisionTrace({}, {});
+  const calls = Array.from({ length: 6 }, () => ({ inputTokens: 9999, outputTokens: 9999, cacheReadTokens: 9999, cacheWriteTokens: 9999, reasoningTokens: 9999 }));
+  trace.settled = { stopReason: 'completed', elapsedMs: 1000, calls: { calls, truncated: false, totalCalls: 6 } };
+  assertTraceSize(trace);
+  assert.equal(trace.settled.calls.calls.length, 6, '6 条完整保留');
+  assert.equal(trace.settled.calls.truncated, false, '不误标截断');
+  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 3072, '≤ 护栏预算');
+});
+
+test('assertTraceSize：超预算时截 settled.calls 内层数组到前 4 条 + truncated', () => {
+  const trace = createDecisionTrace({}, {});
+  // 构造前两级截断后仍超预算的组合：checks 20 条长 detail（第二级截到 6 条仍大）
+  // + settled.calls 6 条大数字——触发第三级截 calls 到 4 条。
+  const checks = Array.from({ length: 20 }, (_, i) => ({ field: `f${i}`, checkedAgainst: 'catalogProviders', detail: '账'.repeat(300) }));
+  recordGate(trace, { name: 'cost', input: {}, output: { checks }, verdict: 'pass' });
+  const calls = Array.from({ length: 6 }, () => ({ inputTokens: 99999, outputTokens: 99999, cacheReadTokens: 99999, cacheWriteTokens: 99999, reasoningTokens: 99999 }));
+  trace.settled = { stopReason: 'completed', elapsedMs: 1000, calls: { calls, truncated: false, totalCalls: 6 } };
+  assertTraceSize(trace);
+  assert.equal(trace.settled.calls.calls.length, 4, 'calls 截到前 4 条');
+  assert.equal(trace.settled.calls.truncated, true, 'truncated 标记置真');
+  assert.equal(trace.settled.calls.totalCalls, 6, 'totalCalls 保留原总数');
+  assert.ok(Buffer.byteLength(JSON.stringify(trace), 'utf8') <= 3072, '收敛到护栏预算内');
 });
 
 test('assertTraceSize：未超限的 trace 原样返回、不截断', () => {
