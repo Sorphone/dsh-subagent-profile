@@ -42,6 +42,8 @@ async function postSetEnabled(handler, body) {
     method: 'POST',
     url: 'http://localhost/subagent-profiles/set-enabled',
     socket: { remoteAddress: '127.0.0.1' },
+    // 写路由 CSRF 三件套（小写键镜像 Node req.headers 归一化）。
+    headers: { origin: 'http://127.0.0.1:12545', 'content-type': 'application/json', 'x-dsh-plugin': 'dsh-subagent-profile' },
     on(event, fn) { (listeners[event] ??= []).push(fn); },
     destroy() {},
   };

@@ -4,9 +4,8 @@
 <div align="center">
   <b style="font-size: 1.15em;">子 Agent 派发方案化插件 —— 用对的人（预设 / 模型 / 推理强度）干对的事</b><br /><br />
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" />
-  <img alt="Version: v0.3.2" src="https://img.shields.io/badge/Version-v0.3.2-blue.svg" />
   <img alt="npm" src="https://img.shields.io/npm/v/dsh-subagent-profile.svg" />
-  <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.0--rc.6%20~%200.1.1--rc.2-blue.svg" />
+  <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.0--rc.6%20~%200.2.0-blue.svg" />
 </div>
 
 <div align="center"><a href="README.md">English</a> · 中文</div>
@@ -83,13 +82,14 @@ dispatch(
 
 - `~/.dsh/subagent-profiles.json` —— 方案注册表（由设置页编辑）。
 - `~/.dsh/subagent-profiles.state.json` —— 插件的启用/禁用开关（默认启用）。
+- `~/.dsh/subagent-profiles.failed-traces.json` —— 失败台账（派发失败轨迹）。
 - `~/.dsh/.agent-presets/orchestrator/` —— 自动安装的 `orchestrator` 编排者预设（每次启动由打包的 `presets/orchestrator/` 同步）。
 
-尊重 `DSH_HOME`，默认 `~/.dsh`。
+尊重 `DSH_HOME`，默认 `~/.dsh`。卸载插件会删除上述三个数据文件与自动安装的 `orchestrator` 预设目录（其它插件的预设不受影响）；重新安装或重新启动会重新同步预设并重新生成数据文件。
 
 ## 已知限制
 
-- **后台**一次性派发需要加载 `@deepseek-ai/dsh-jobs` 与 `@deepseek-ai/dsh-tool-jobs`，否则报「background jobs unavailable」。
+- **后台**一次性派发需要加载 `@deepseek-ai/dsh-jobs` 与 `@deepseek-ai/dsh-tool-jobs`，否则报「后台派发不可用：缺少 jobs 服务」。
 - **可续跑**模式走 DSH 标准组合路径，因此 `preset` 换用与 `reasoningEffort` 会被忽略（继承父预设、使用默认推理强度）。
 - **可续跑**工具门为插件侧缓解：子 Agent 的 `allow` 预加工为闭集 —— 父工具集 − `run_code` − `deny`，再与 `allow` 取交集。**假设：** 可续跑继承父预设 ⇒ 子工具集 ≈ 父工具集。**失效条件：** 任何导致子工具集与父工具集不一致的宿主行为变化（非仅换用预设——例如未来允许换用预设、组合不同工具集等），父集都可能含子集没有的工具，`tools.restrict` 会抛「未知工具」→ 本缓解自动降级为 fail-loud（保守安全）；待上游提供 provider 守卫接缝后替换为真交集。
 
@@ -111,10 +111,10 @@ dsh-subagent-profile/
 ├── package.json                  # 元数据、files 发布白名单、exports（test / test:bare / preflight scripts）
 ├── scripts/
 │   ├── release.mjs               # 发布脚本（版本 bump / tag 校验）
-│   └── preflight.mjs             # preflight：preset 树对账 + README 徽章 == version（零依赖）
+│   └── preflight.mjs             # preflight：preset 树对账 + 无硬编码版本徽章（零依赖）
 ├── docs/
 │   └── screenshots/              # README 截图
-├── test/                         # 宿主侧自动化测试（node:test，零新增依赖；101 用例 = 26 bare + 75 junction）
+├── test/                         # 宿主侧自动化测试（node:test，零新增依赖；352 用例——bare 子集 CI 跑、junction 档本机跑）
 │   ├── README.md / README.zh.md  # 测试目录说明（中英双语）——两档测试划分
 │   ├── harness/ctx.mjs           # 假宿主环境（fake ctx + ~/.dsh 隔离）
 │   ├── pure / input-schema / catalog-integrity.test.mjs   # bare 档（import-free，bare CI 可跑）
@@ -130,7 +130,7 @@ dsh-subagent-profile/
 ### CI（bare）与 preflight
 
 - **Gitea Actions**（`.gitea/workflows/ci.yml`）：`push` / `pull_request` 到 `v2-midterm` / `main` 时运行 **bare-CI** 子集——从不加载 `@deepseek-ai` 的测试（`npm run test:bare`：pure / input-schema / catalog-integrity）、`node --check` 全仓库语法检查、eslint 行门（eslint 在仓库外隔离安装，因裸环境装不到 `@deepseek-ai` devDependencies）、以及 `npm run preflight`。**启用 Gitea Actions 需服务器装 Act runner**（注册时带上 `ubuntu-latest` 标签），runner 就绪后本工作流自动生效。依赖 junction 的测试（characterization / facade / gating / persist / recycle / cost-guard / continuable-guard）仅本机跑——两档测试的划分与理由见 `test/README.zh.md`。
-- **Preflight**（`npm run preflight`）：零依赖自检——① `presets/` 与全新 `$DSH_HOME/.agent-presets` 派生树做 byte 一致集合对账（双向；绝不写真实 `~/.dsh`）；② 断言 README 版本徽章（Hero 区 `v<version>`）与 `package.json` 的 `version` 一致。非零退出即漂移，发布前修复后重跑。
+- **Preflight**（`npm run preflight`）：零依赖自检——① `presets/` 与全新 `$DSH_HOME/.agent-presets` 派生树做 byte 一致集合对账（双向；绝不写真实 `~/.dsh`）；② 断言 README 不含硬编码版本徽章（`badge/Version-v…`；版本展示由 npm 徽章自动跟随发布版本）。非零退出即漂移，发布前修复后重跑。
 
 如果这个插件帮到了你,欢迎在 GitHub 上点个 ⭐,让更多人看到它。
 

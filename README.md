@@ -4,9 +4,8 @@
 <div align="center">
   <b style="font-size: 1.15em;">Subagent dispatch, profiled — the right agent for the right task (preset / model / reasoning effort)</b><br /><br />
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" />
-  <img alt="Version: v0.3.2" src="https://img.shields.io/badge/Version-v0.3.2-blue.svg" />
   <img alt="npm" src="https://img.shields.io/npm/v/dsh-subagent-profile.svg" />
-  <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.0--rc.6%20~%200.1.1--rc.2-blue.svg" />
+  <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.0--rc.6%20~%200.2.0-blue.svg" />
 </div>
 
 <div align="center">English · <a href="README.zh.md">中文</a></div>
@@ -83,13 +82,14 @@ Delegation never lets a subagent gain more power than you already have — this 
 
 - `~/.dsh/subagent-profiles.json` — the profile registry (edited from the settings page).
 - `~/.dsh/subagent-profiles.state.json` — the plugin's enable/disable switch (default enabled).
+- `~/.dsh/subagent-profiles.failed-traces.json` — the failure ledger (dispatch failure traces).
 - `~/.dsh/.agent-presets/orchestrator/` — the self-installed `orchestrator` agent preset (synced from the bundled `presets/orchestrator/` on every startup).
 
-`DSH_HOME` is respected and defaults to `~/.dsh`.
+`DSH_HOME` is respected and defaults to `~/.dsh`. Uninstalling the plugin removes the three data files above and the self-installed `orchestrator` preset directory (other plugins' presets are left untouched); re-installing or re-launching re-syncs the preset and regenerates the data files.
 
 ## Known limitations
 
-- **Background** one-shot dispatch requires `@deepseek-ai/dsh-jobs` and `@deepseek-ai/dsh-tool-jobs` to be loaded; otherwise it fails with "background jobs unavailable".
+- **Background** one-shot dispatch requires `@deepseek-ai/dsh-jobs` and `@deepseek-ai/dsh-tool-jobs` to be loaded; otherwise it fails with "dispatch: 后台派发不可用：缺少 jobs 服务".
 - **Continuable** mode goes through the DSH standard composition path, so the `preset` swap and `reasoningEffort` are ignored (the child inherits the parent preset at the default reasoning effort).
 - **Continuable** tool gate is a plugin-side mitigation: the child's `allow` is pre-computed as a closed set — parent tool set − `run_code` − `deny`, then intersected with `allow`. **Assumption:** continuable inherits the parent preset, so the child's tool set ≈ the parent's. **Failure condition:** any host behavior change that makes the child's tool set differ from the parent's (not only preset swap — e.g. a future preset swap, composing a different tool set) means the parent set can contain tools the child does not have, so `tools.restrict` throws "unknown tool" and this mitigation automatically degrades to fail-loud (conservatively safe); it must then be replaced with a true parent ∩ child intersection once the upstream provides a provider guard seam.
 
@@ -111,10 +111,10 @@ dsh-subagent-profile/
 ├── package.json                  # metadata, files whitelist, exports (test / test:bare / preflight scripts)
 ├── scripts/
 │   ├── release.mjs               # release helper (version bump / tag checks)
-│   └── preflight.mjs             # preflight: preset-tree reconciliation + README badge == version (zero-dep)
+│   └── preflight.mjs             # preflight: preset-tree reconciliation + no hardcoded version badge (zero-dep)
 ├── docs/
 │   └── screenshots/              # README screenshots
-├── test/                         # host-side tests (node:test, zero extra deps; 101 cases = 26 bare + 75 junction)
+├── test/                         # host-side tests (node:test, zero extra deps; 352 cases — bare subset in CI, junction local)
 │   ├── README.md / README.zh.md  # test directory guide (EN/ZH) — two-tier split explained
 │   ├── harness/ctx.mjs           # fake Cordis ctx + ~/.dsh isolation
 │   ├── pure / input-schema / catalog-integrity.test.mjs   # bare tier (import-free, runs in bare CI)
@@ -130,7 +130,7 @@ Found a bug or have an idea? [Open an issue](https://github.com/muzyLink/dsh-sub
 ### CI (bare) & preflight
 
 - **Gitea Actions** (`.gitea/workflows/ci.yml`): on `push` / `pull_request` to `v2-midterm` / `main`, runs the **bare-CI** subset — the tests that never load `@deepseek-ai` (`npm run test:bare`: pure / input-schema / catalog-integrity), `node --check` syntax checks, eslint (installed in isolation, since the bare environment cannot install the `@deepseek-ai` devDependencies), and `npm run preflight`. **Enabling Gitea Actions requires installing an Act runner on the server** (register it with the `ubuntu-latest` label); the workflow takes effect automatically once the runner is ready. Junction-dependent tests (characterization / facade / gating / persist / recycle / cost-guard / continuable-guard) run locally only — see `test/README.md` for the two-tier split and its rationale.
-- **Preflight** (`npm run preflight`): zero-dependency self-check — ① reconciles the bundled `presets/` tree against a fresh `$DSH_HOME/.agent-presets` derived tree (byte-identical set, both directions; never touches the real `~/.dsh`), ② asserts the README version badge (`v<version>` in the hero) matches `package.json` `version`. Non-zero exit means drift — fix and re-run before release.
+- **Preflight** (`npm run preflight`): zero-dependency self-check — ① reconciles the bundled `presets/` tree against a fresh `$DSH_HOME/.agent-presets` derived tree (byte-identical set, both directions; never touches the real `~/.dsh`), ② asserts the READMEs contain no hardcoded version badge (`badge/Version-v…` — the npm badge follows the published version automatically). Non-zero exit means drift — fix and re-run before release.
 
 If this plugin has been useful to you, please give it a ⭐ on GitHub — it helps others find it.
 

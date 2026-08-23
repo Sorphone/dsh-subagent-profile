@@ -81,6 +81,7 @@ function createFakeCtx(options = {}) {
     contextCalls: [],
     schemaCalls: [],
     agentCreateCalls: 0,
+    ons: [],
   };
 
   const logger = {
@@ -149,6 +150,19 @@ function createFakeCtx(options = {}) {
     },
     effect: runEffect,
     logger,
+    // 事件总线最小 fake：on 登记回调、off 移除；apply 的 agent/disposed 挂钩
+    // （registerTeardown）经此登记，测试可手动触发 records.ons 中的回调。
+    on(name, callback) {
+      records.ons.push({ name, callback });
+      return () => {
+        const index = records.ons.findIndex((entry) => entry.callback === callback);
+        if (index >= 0) records.ons.splice(index, 1);
+      };
+    },
+    off(name, callback) {
+      const index = records.ons.findIndex((entry) => entry.name === name && entry.callback === callback);
+      if (index >= 0) records.ons.splice(index, 1);
+    },
     subagents: {
       registerProvider(provider) { records.registerProviderCalls.push(provider); return makeDisposer(); },
       start: subagentsStart,

@@ -2,19 +2,28 @@
 // 源自原型动态插件 `code.host` 主体；宿主导入面（registerTool/defineTool/
 // handle）收敛在 lib/core/shims.mjs，装配块按模块拆分驻留 lib/core/（catalog /
 // presets-sync / profiles-store / cost-guard / whitelist / intersection /
-// delegation / pure / shims / http-routes / profile-provider / dispatch-tool）。
+// delegation / pure / shims / http-routes / profile-provider / dispatch-tool /
+// dispatch-guard）。
 // apply 的装配辅助函数（syncBundledPresetsToHome / provideProfileService /
 // registerSystemPromptSections / registerSettingsRoutes）保持 section 文本与
 // 门控逐字不变；`enabled` 始终经 getter 注入，门控读取当前值。
 
+import { readdirSync, renameSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { syncBundledPresets } from './lib/core/presets-sync.mjs';
 import { dshHome, createProfileStore } from './lib/core/profiles-store.mjs';
 import { createHttpRoutes } from './lib/core/http-routes.mjs';
 import { createProfileProvider } from './lib/core/profile-provider.mjs';
 import { createDispatchTool } from './lib/core/dispatch-tool.mjs';
+import { createDispatchGuard } from './lib/core/dispatch-guard.mjs';
 import { createCatalogCache } from './lib/core/catalog-cache.mjs';
+import { createFailureLedger } from './lib/core/decision-trace.mjs';
+import { createEvolutionLedger } from './lib/core/evolution-ledger.mjs';
+import { createEscapeStore, recordEscapeAllowProvider } from './lib/core/escape.mjs';
 import { tierSortKey } from './lib/core/pure.mjs';
+import { resolveWhitelist, FALLBACK_WHITELIST } from './lib/core/whitelist.mjs';
+import { buildAdviceText, refreshSummaries } from './lib/core/evolution-summary.mjs';
 
 export const name = 'dsh-subagent-profile';
 export const inject = ['subagents', 'tools', 'agents'];
@@ -31,9 +40,66 @@ function syncBundledPresetsToHome(ctx) {
     const sync = syncBundledPresets(presetRoot);
     for (const { id, error } of sync.failed) ctx.logger.warn(`[dsh-subagent-profile] preset ${id} sync failed: ${error}`);
     if (sync.synced.length > 0) ctx.logger.info(`[dsh-subagent-profile] presets synced into ${presetRoot}: ${sync.synced.join(', ')}`);
+    if (sync.userModified.length > 0) ctx.logger.warn(`[dsh-subagent-profile] presets left untouched (user-modified): ${sync.userModified.join(', ')}`);
   } catch (error) {
     ctx.logger.warn('[dsh-subagent-profile] preset sync failed:', error instanceof Error ? error.message : String(error));
   }
+}
+
+// 卸载清理：把本插件持久化的 3 个数据文件 + 自装的 orchestrator 预设目录改名备份
+// （只动本插件拥有的 orchestrator 目录，不碰 .agent-presets 下其它插件/用户的目录）。
+// 改为「改名到 <name>.removed-<ts>」而非 rmSync 删除：ctx.effect 的清理器在禁用/热
+// 重载/进程退出时都可能触发，硬删除会静默丢失用户 profiles/state/失败台账（S1）。
+// 备份保留可恢复副本；规范路径被清空，重装/重启后经 syncBundledPresetsToHome 重新
+// 同步预设、数据文件按需重新生成。fail-soft：改名失败不抛（卸载不应因清理失败而阻断）。
+function removeOwnedData(home) {
+  const stamp = Date.now();
+  for (const file of ['subagent-profiles.json', 'subagent-profiles.state.json', 'subagent-profiles.failed-traces.json']) {
+    try { renameSync(join(home, file), join(home, `${file}.removed-${stamp}`)); } catch { /* 源不存在（正常首启）等：best effort */ }
+  }
+  try { renameSync(join(home, '.agent-presets', 'orchestrator'), join(home, '.agent-presets', `orchestrator.removed-${stamp}`)); } catch { /* best effort */ }
+}
+
+// 启动清理 S1 改名备份残留：.removed-<ts> 备份在下次正常启动后已无保留价值（数据
+// 文件按需重新生成），启动时清掉防积累（热重载/禁用反复触发 effect 会持续产生新
+// 备份）。只清本插件前缀（subagent-profiles.* 与 orchestrator.removed-*），不碰其它
+// 文件；卸载后用户手动改回原名的场景不受影响（改回后无 .removed 残留）。fail-soft。
+function cleanRemovedBackups(home) {
+  for (const dir of [home, join(home, '.agent-presets')]) {
+    let names;
+    try { names = readdirSync(dir); } catch { continue; }
+    for (const name of names) {
+      try {
+        if (name.startsWith('subagent-profiles.') && name.includes('.removed-')) {
+          rmSync(join(dir, name), { force: true });
+        } else if (name.startsWith('orchestrator.removed-')) {
+          rmSync(join(dir, name), { recursive: true, force: true });
+        }
+      } catch { /* best effort */ }
+    }
+  }
+}
+
+// 卸载接线：注销 dispatch 工具（若仍注册）+ 清空失败台账 + 级联取消在途派发 +
+// 清空守卫记账 + 删本插件数据文件与自装预设目录。另挂钩宿主 agent/disposed
+// （Agent 注册 fiber 卸载时发射）：父会话逻辑结束时按父释放并发/token 记账，
+// 防配额随会话累积驻留。
+function registerTeardown(ctx, dispatch, ledger, guard, home) {
+  ctx.effect(() => dispatch.dispose);
+  ctx.effect(() => ledger.clear);
+  ctx.effect(() => () => {
+    guard.cancelAll();
+    guard.reset();
+    removeOwnedData(home);
+  });
+  const onAgentDisposed = ({ agent }) => {
+    const parentSessionId = agent?.session?.header?.id;
+    if (parentSessionId !== undefined && parentSessionId !== null && parentSessionId !== '') {
+      guard.resetParent(parentSessionId);
+    }
+  };
+  ctx.on('agent/disposed', onAgentDisposed);
+  ctx.effect(() => () => ctx.off('agent/disposed', onAgentDisposed));
 }
 
 // subagent-profiles service over the store's per-apply profiles Map —
@@ -43,10 +109,10 @@ function provideProfileService(ctx, store) {
   ctx.provide('subagent-profiles', {
     register(profile) {
       if (!profile || typeof profile.id !== 'string' || profile.id.length === 0) {
-        throw new Error('subagent-profiles: profile id must be a non-empty string');
+        throw new Error('subagent-profiles: profile id 必须为非空字符串');
       }
       if (store.profiles.has(profile.id)) {
-        throw new Error(`subagent-profiles: profile "${profile.id}" is already registered`);
+        throw new Error(`subagent-profiles: profile "${profile.id}" 已注册（id 需唯一）`);
       }
       const registered = { ...profile };
       store.profiles.set(profile.id, registered);
@@ -113,11 +179,22 @@ function profileSectionText(store, gate, context) {
 // orchestrator:mode section 文本（逐字保留；与 profiles 同门控）。
 const ORCHESTRATOR_MODE_TEXT = '本机已安装 dsh-subagent-profile 插件的「编排者模式」agent preset：新建会话的预设选择器中可选「编排者模式」。该模式把 Agent 定位为主协调者——拆解任务后按场景用 dispatch（内置 swap-standard=标准编码、researcher=调研检索，可在「子 Agent 方案」设置页自定义）与 subagent/subagent_fork/workflow 委派给子 Agent，再整合结果。preset 文件由插件维护于 ~/.dsh/.agent-presets，安装/升级时自动同步；用户提到「编排者模式 / orchestrator / 主协调模式」时即指本预设，请据此协作。';
 
+// 建议注入候选池：system-trust 白名单（agentPresets 可选；解析失败回退内置
+// 回退名单——fail-loud 检查在建议生成路径进行，不在此处）。刻意不叠加逃生舱放行
+// 集：只读建议不享受逃生舱（逃生舱仅放行「其余三道闸全过」的显式派发，不扩建议池）。
+async function resolveAdviceWhitelist(ctx) {
+  try {
+    return new Set(await resolveWhitelist(ctx.get('agentPresets')));
+  } catch {
+    return new Set(FALLBACK_WHITELIST);
+  }
+}
+
 // Directory section rendering the available profiles (systemPrompt's
 // section `text` accepts a function, as the shipped tool-subagent proves).
 // gate: `enabled` must be read live (getter), so /set-enabled toggles
 // apply immediately without a restart.
-function registerSystemPromptSections(ctx, store, getEnabled) {
+function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice, adviceEnv) {
   const pluginSystemPrompt = ctx.get('systemPrompt');
   if (pluginSystemPrompt === undefined) return;
   const gate = (context) => sectionGatePasses(ctx, getEnabled, context);
@@ -134,6 +211,23 @@ function registerSystemPromptSections(ctx, store, getEnabled) {
     order: 117,
     text: (context) => (gate(context) ? ORCHESTRATOR_MODE_TEXT : ''),
   });
+  // 只读建议段：门控 = orchestrator（sectionGatePasses）+ evolutionAdvice 开关。
+  // 只进父 Agent（复用同一门控）、默认关、只含确定性聚合数字与建议文案，不含派生原文。
+  // 生成异常 try/catch 兜底：fail-loud 检查（非 system 候选）落 warn 日志但绝不
+  // 阻断每次提示装配——损坏/手改的 summaries 不得让 orchestrator 会话无法启动。
+  pluginSystemPrompt.section({
+    name: 'evolution:advice',
+    order: 116.8,
+    text: (context) => {
+      if (!getEvolutionAdvice() || !gate(context)) return '';
+      try {
+        return buildAdviceText(adviceEnv);
+      } catch (error) {
+        adviceEnv.logger.warn(`[dsh-subagent-profile] evolution:advice 生成失败，本次不注入：${error instanceof Error ? error.message : String(error)}`);
+        return '';
+      }
+    },
+  });
 }
 
 // HTTP loopback routes for the Client settings UI (webServer.register ↔
@@ -144,7 +238,7 @@ function registerSystemPromptSections(ctx, store, getEnabled) {
 // (listen) is async and may not be ready when this plugin's inject deps
 // resolve, so register inside an inject sub-scope that waits for it
 // (ctx.get would read undefined at apply time).
-function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog) {
+function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, getAudit, getEvolutionAdvice, setEvolutionAdvice, getEscapeEnabled, setEscapeEnabled, escape, refreshAdvice) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(createHttpRoutes({
       webServer: scope.webServer,
@@ -153,6 +247,14 @@ function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, ca
       setEnabled,
       syncTool,
       catalog,
+      ledger,
+      getAudit,
+      getEvolutionAdvice,
+      setEvolutionAdvice,
+      getEscapeEnabled,
+      setEscapeEnabled,
+      escape,
+      refreshAdvice,
       logger: ctx.logger,
     }), 'dsh-subagent-profile: settings routes');
   });
@@ -170,48 +272,80 @@ function createSharedCatalog(ctx) {
   });
 }
 
-export async function apply(ctx) {
-  // Enable/disable switch (default on, runtime-toggled by the settings
-  // page, persisted across restarts) + profile registry — lib/profiles-store
-  // .mjs: createProfileStore. loadProfiles runs once at startup via the
-  // explicit call below (the factory itself does not auto-load).
-  const store = createProfileStore({ dshHome: dshHome(), logger: ctx.logger });
-  let enabled = store.loadEnabled();
-  store.loadProfiles();
-  // Self-install the bundled "orchestrator" preset (idempotent, fail-soft).
-  syncBundledPresetsToHome(ctx);
-  // 进程级共享 catalog 快照（/options 三路由 + dispatch cost guard 共用）。
-  const catalog = createSharedCatalog(ctx);
-  // `dispatch` tool — lib/core/dispatch-tool.mjs: defineTool block (schema +
-  // execute), the result-schema consistency lock and the syncTool
-  // register/unregister logic.
-  // Created BEFORE the HTTP inject so createHttpRoutes can capture
-  // dispatch.syncTool (/set-enabled).
-  const dispatch = createDispatchTool({
+// 读本插件 package.json version 供派发台账 provenance 使用。fail-soft：读取/解析
+// 失败回退 'unknown'，绝不阻断插件启动。
+function readPluginVersion() {
+  try {
+    const pkg = createRequire(import.meta.url)('./package.json');
+    return typeof pkg?.version === 'string' && pkg.version !== '' ? pkg.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+// 逃生舱装配：放行集 store + 开关态（state.json 持久化）+ 访问器。开关态经对象字段
+// 可变（/set-escape 改写），getEscapeSet 开关关时恒空数组（零叠加、零放行审计）。
+function setupEscape(ctx, store, evoLedger, home) {
+  const escape = createEscapeStore({ dshHome: home, logger: ctx.logger, onGovernanceFailure: () => evoLedger.markGovernanceFailure() });
+  const state = { escapeEnabled: store.loadEscapeEnabled() };
+  return {
+    escape,
+    getEscapeSet: () => (state.escapeEnabled ? escape.list() : []),
+    getEscapeEnabled: () => state.escapeEnabled,
+    setEscapeEnabled: (next) => { state.escapeEnabled = next; },
+    recordEscapeAllowProvider: (parent, preset) => recordEscapeAllowProvider(evoLedger, parent, preset),
+  };
+}
+
+// `dispatch` 工具装配（defineTool + execute + syncTool）。须在 HTTP inject 之前
+// 构造，使 createHttpRoutes 能拿 dispatch.syncTool 供 /set-enabled 注册/注销。
+function createDispatch(ctx, store, catalog, ledger, guard, evoLedger, getEscapeSet, getEnabled) {
+  return createDispatchTool({
     register: (tool) => ctx.tools.register(tool),
     store,
-    getEnabled: () => enabled,
+    getEnabled,
     getService: (name) => ctx.get(name),
     logger: ctx.logger,
     subagents: ctx.subagents,
     catalog,
+    ledger,
+    guard,
+    evoLedger,
+    getEscapeSet,
   });
-  // subagent-profiles service over the store's per-apply profiles Map.
+}
+
+export async function apply(ctx) {
+  const home = dshHome();
+  // 启动清理：上个生命周期留下的 .removed-* 备份残留（S1 改名的副产物）。
+  cleanRemovedBackups(home);
+  // 派发台账 + 审计分级须在 store 之前构造：store 的治理审计钩子指向其 markGovernanceFailure。
+  const evoLedger = createEvolutionLedger({ dshHome: home, pluginVersion: readPluginVersion(), warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
+  const store = createProfileStore({ dshHome: home, logger: ctx.logger, onGovernanceFailure: () => evoLedger.markGovernanceFailure() });
+  const escapeCtl = setupEscape(ctx, store, evoLedger, home);
+  let enabled = store.loadEnabled();
+  let evolutionAdvice = store.loadEvolutionAdvice();
+  store.loadProfiles();
+  // Self-install the bundled "orchestrator" preset (idempotent, fail-soft).
+  syncBundledPresetsToHome(ctx);
+  const catalog = createSharedCatalog(ctx);
+  const ledger = createFailureLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`), stateFile: join(home, 'subagent-profiles.failed-traces.json') });
+  const guard = createDispatchGuard({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
+  const dispatch = createDispatch(ctx, store, catalog, ledger, guard, evoLedger, escapeCtl.getEscapeSet, () => enabled);
   provideProfileService(ctx, store);
-  // Gated system-prompt sections (profile directory + orchestrator mode).
-  registerSystemPromptSections(ctx, store, () => enabled);
-  // `profile` subagent provider — lib/core/profile-provider.mjs:
-  // createProfileProvider registers the provider and returns the disposer.
-  const disposeProvider = createProfileProvider({
-    subagents: ctx.subagents,
-    store,
-    getEnabled: () => enabled,
+  const adviceWhitelist = await resolveAdviceWhitelist(ctx);
+  const adviceEnv = { summariesFile: join(home, 'subagent-evolution', 'summaries.json'), dispatchFile: join(home, 'subagent-evolution', 'dispatch.jsonl'), whitelist: adviceWhitelist, logger: ctx.logger };
+  // 生产聚合触发点（T1 修复）：/options/refresh 手动刷新时重算 summaries.json，让
+  // evolution:advice 有初始生成路径（原先 computeSummaries/writeSummaries 只被测试调用）。
+  const refreshAdvice = () => refreshSummaries({
+    dispatchFile: join(home, 'subagent-evolution', 'dispatch.jsonl'),
+    summariesFile: join(home, 'subagent-evolution', 'summaries.json'),
     logger: ctx.logger,
-    catalog,
   });
+  registerSystemPromptSections(ctx, store, () => enabled, () => evolutionAdvice, adviceEnv);
+  const disposeProvider = createProfileProvider({ subagents: ctx.subagents, store, getEnabled: () => enabled, logger: ctx.logger, catalog, getEscapeSet: escapeCtl.getEscapeSet, recordEscapeAllowProvider: escapeCtl.recordEscapeAllowProvider });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
   // HTTP loopback routes for the Client settings UI — lib/core/http-routes.mjs.
-  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog);
-  // Teardown: unregister the dispatch tool (if still registered).
-  ctx.effect(() => dispatch.dispose);
+  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice);
+  registerTeardown(ctx, dispatch, ledger, guard, home);
 }

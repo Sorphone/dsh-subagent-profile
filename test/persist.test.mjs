@@ -165,3 +165,32 @@ test('tokenTier 写路径：/add 传合法 tier 落盘，未传保留 existing�
     assert.match(bad.json.error, /tokenTier/);
   } finally { iso.restore(); iso.teardown(); }
 });
+
+test('loadState: 损坏的 state.json 按 fail-closed 处理（enabled:false，不静默回退开）', async () => {
+  const iso = makeIsolatedDshHome();
+  try {
+    writeFileSync(join(iso.dir, 'subagent-profiles.state.json'), '{ not valid json', 'utf8');
+    const { routes } = await setupApp();
+    const handler = routes[0].handler;
+    const summary = await callRoute(handler, 'GET', '/options/summary');
+    assert.equal(summary.json.enabled, false, '损坏 state.json 必须 fail-closed（enabled:false）');
+    assert.equal(summary.json.evolutionAdvice, false, '损坏 state.json 建议开关关');
+    assert.equal(summary.json.escapeEnabled, false, '损坏 state.json 逃生舱关');
+  } finally { iso.restore(); iso.teardown(); }
+});
+
+test('persistState: 三开关写路径回传 persisted 信号（/set-enabled 等）', async () => {
+  const iso = makeIsolatedDshHome();
+  try {
+    const { routes } = await setupApp();
+    const handler = routes[0].handler;
+    const on = await callRoute(handler, 'POST', '/set-enabled', { enabled: false });
+    assert.equal(on.code, 200);
+    assert.equal(on.json.enabled, false);
+    assert.equal(on.json.persisted, true, '/set-enabled 必须回传 persisted:true');
+    const advice = await callRoute(handler, 'POST', '/set-evolution-advice', { advice: true });
+    assert.equal(advice.json.persisted, true, '/set-evolution-advice 必须回传 persisted');
+    const escape = await callRoute(handler, 'POST', '/set-escape', { enabled: true });
+    assert.equal(escape.json.persisted, true, '/set-escape 必须回传 persisted');
+  } finally { iso.restore(); iso.teardown(); }
+});

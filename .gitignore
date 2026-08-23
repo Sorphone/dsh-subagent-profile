@@ -1,3 +1,6 @@
 node_modules/
 *.log
 .DS_Store
+
+# 含真实使用账单数据（金额/调用次数/单价），不随 git/GitHub 发布（用户决定）
+docs/cost-closed-loop-design.md

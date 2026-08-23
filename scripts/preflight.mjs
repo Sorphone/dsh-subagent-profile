@@ -10,8 +10,8 @@
 //    bundledPresetsRoot 指到不存在的 lib/presets，导致启动自安装静默失效——本检查可抓）、
 //    同步失败、漏拷/多拷/字节损坏。用户本机 ~/.dsh 派生树的漂移由插件启动时幂等重同步负责。
 //    同步失败或任一文件漂移 → 不一致。
-// 2. README 徽章 == version：package.json 的 version 必须出现在 README.md 的字面版本徽章
-//    （vX.Y.Z 形式）中；缺徽章或出现与 version 不一致的 vX.Y.Z 字面量 → 漂移。
+// 2. README 无硬编码版本徽章：版本展示由 npm 徽章（自动跟随发布版本）承担，
+//    手写的 Version-vX.Y.Z 字面徽章会在 bump 时漂移 → 发现即失败。
 //
 // 用法：node scripts/preflight.mjs   （CI 与发布前均调用；见 .gitea/workflows/ci.yml）
 
@@ -22,10 +22,9 @@ import { fileURLToPath } from 'node:url';
 import {
   bundledPresetsRoot,
   filesUnder,
+  isSyncMetadata,
   syncBundledPresets,
 } from '../lib/core/presets-sync.mjs';
-
-const VERSION_TOKEN = /v\d+\.\d+\.\d+/g;
 
 // 包根 = scripts/ 的上一级（本文件位于 <root>/scripts/preflight.mjs）。
 function packageRoot() {
@@ -62,6 +61,8 @@ function collectProblems(sourceRoot, targetRoot) {
     if (existsSync(targetDir)) {
       for (const file of filesUnder(targetDir)) {
         const rel = relative(targetDir, file);
+        // 同步元数据（sidecar / 用户改动档案）是插件本地产物，非 preset 漂移。
+        if (isSyncMetadata(rel)) continue;
         if (!existsSync(join(sourceDir, rel))) {
           problems.push(`多余 ${id}/${rel}`);
         }
@@ -102,19 +103,18 @@ function reconcilePresetTrees() {
   }
 }
 
-// 检查 ②：README 徽章 == version。README.md 必须含与 package.json version 一致的字面
-// 版本徽章（vX.Y.Z）；缺徽章或存在不一致的 vX.Y.Z 字面量（含历史残留）→ 漂移。
+// 检查 ②：README 不得含硬编码版本徽章。版本展示由 npm 徽章（自动跟随发布版本）
+// 承担；任何手写的 Version-vX.Y.Z 字面徽章都会在发布 bump 时漂移，故这里反向
+// 断言「不存在」——发现即要求移除（改用 npm 徽章）。
 function checkReadmeBadge(root) {
-  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-  const expected = `v${pkg.version}`;
   const readme = readFileSync(join(root, 'README.md'), 'utf8');
-  const tokens = readme.match(VERSION_TOKEN) ?? [];
-  if (tokens.length === 0) {
-    return { ok: false, problems: [`README.md 缺少版本徽章，应含 ${expected} 字面徽章（见 README.md Hero 区）`] };
+  const zh = readFileSync(join(root, 'README.zh.md'), 'utf8');
+  const hardcoded = [];
+  for (const [name, text] of [['README.md', readme], ['README.zh.md', zh]]) {
+    if (/badge\/Version-v/.test(text)) hardcoded.push(name);
   }
-  const stale = [...new Set(tokens.filter((token) => token !== expected))];
-  if (stale.length > 0) {
-    return { ok: false, problems: [`README.md 版本徽章漂移：期望 ${expected}，发现 ${stale.join('、')}（与 package.json 不同步，请更新徽章）`] };
+  if (hardcoded.length > 0) {
+    return { ok: false, problems: [`${hardcoded.join('、')} 含硬编码版本徽章（badge/Version-v…）：请移除，版本展示由 npm 徽章自动跟随发布版本`] };
   }
   return { ok: true, problems: [] };
 }
@@ -123,7 +123,7 @@ function main() {
   const root = packageRoot();
   const checks = [
     { name: 'preset 树对账：presets/ ↔ $DSH_HOME/.agent-presets 派生树 byte 一致（临时 DSH_HOME，不写真实 ~/.dsh）', ...reconcilePresetTrees() },
-    { name: 'README 徽章 == package.json version', ...checkReadmeBadge(root) },
+    { name: 'README 无硬编码版本徽章（版本展示由 npm 徽章承担）', ...checkReadmeBadge(root) },
   ];
   let failed = false;
   for (const check of checks) {
@@ -135,7 +135,7 @@ function main() {
     console.error('\npreflight 未通过：请修复上述漂移后重跑 `node scripts/preflight.mjs`。');
     process.exitCode = 1;
   } else {
-    console.log('\npreflight 通过：preset 树一致，README 徽章与版本号同步。');
+    console.log('\npreflight 通过：preset 树一致，README 无硬编码版本徽章。');
   }
 }
 
