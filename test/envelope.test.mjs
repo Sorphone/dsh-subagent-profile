@@ -148,6 +148,6 @@ test('默认（无 envelope）→ 不注入骨架、剪枝照常', async () => {
     const out = await tool.execute({ prompt: 'task' }, { agent: makeForegroundParent(), signal: undefined });
     assert.equal(captured.persona, undefined, '无 envelope 且未设 persona → 不注入信封骨架');
     assert.equal(pruneCalls.length, 1, '剪枝照常：pruneContent 仍被调用一次');
-    assert.equal(out.output, 'PRUNED', '剪枝照常：输出为裁剪结果');
+    assert.ok(out.output.endsWith('PRUNED'), '剪枝照常：输出为裁剪结果（信任标注前缀在 output 文本内）');
   } finally { iso.restore(); iso.teardown(); }
 });

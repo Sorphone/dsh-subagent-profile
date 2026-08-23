@@ -129,7 +129,7 @@ test('envelope 参数：schema 中为 boolean；生效只改 persona 骨架、�
     await mod.apply(c2);
     const tool2 = r2.registerToolCalls.find((t) => t.name === 'dispatch');
     const out = await tool2.execute({ prompt: 'task', envelope: true }, { agent: parent, signal: undefined });
-    assert.equal(out.output, 'plain-task-output', '回收输出仍为纯文本（骨架进 persona 不进 output）');
+    assert.ok(out.output.endsWith('plain-task-output'), '回收输出仍为纯文本（骨架进 persona 不进 output；信任标注前缀在 output 文本内）');
   } finally { iso.restore(); iso.teardown(); }
 });
 
@@ -159,7 +159,7 @@ test('前台回收：有 toolResultPruner → pruneContent 在 textFrom 前被�
     const out = await tool.execute({ prompt: 'task' }, { agent: makeForegroundParent(), signal: undefined });
     assert.equal(pruneCalls.length, 1, 'pruneContent 必须在 textFrom 之前被调用一次');
     assert.deepEqual(pruneCalls[0], [{ type: 'text', text: 'FULL-LONG-CONTENT' }], '传入的必须是原始结果 blocks');
-    assert.equal(out.output, 'PRUNED-CONTENT', 'textFrom 必须消费裁剪后的 blocks');
+    assert.ok(out.output.endsWith('PRUNED-CONTENT'), 'textFrom 必须消费裁剪后的 blocks（信任标注前缀在 output 文本内）');
   } finally { iso.restore(); iso.teardown(); }
 });
 
@@ -174,7 +174,7 @@ test('前台回收：无 toolResultPruner → 不剪，输出为完整文本', a
     await mod.apply(ctx);
     const tool = records.registerToolCalls.find((t) => t.name === 'dispatch');
     const out = await tool.execute({ prompt: 'task' }, { agent: makeForegroundParent(), signal: undefined });
-    assert.equal(out.output, 'FULL-UNPRUNED', '无 pruner → 完整输出，不剪');
+    assert.ok(out.output.endsWith('FULL-UNPRUNED'), '无 pruner → 完整输出，不剪（信任标注前缀在 output 文本内）');
   } finally { iso.restore(); iso.teardown(); }
 });
 
