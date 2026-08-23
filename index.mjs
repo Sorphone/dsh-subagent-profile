@@ -9,6 +9,7 @@
 // 门控逐字不变；`enabled` 始终经 getter 注入，门控读取当前值。
 
 import { rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { syncBundledPresets } from './lib/core/presets-sync.mjs';
 import { dshHome, createProfileStore } from './lib/core/profiles-store.mjs';
@@ -18,6 +19,7 @@ import { createDispatchTool } from './lib/core/dispatch-tool.mjs';
 import { createDispatchGuard } from './lib/core/dispatch-guard.mjs';
 import { createCatalogCache } from './lib/core/catalog-cache.mjs';
 import { createFailureLedger } from './lib/core/decision-trace.mjs';
+import { createEvolutionLedger } from './lib/core/evolution-ledger.mjs';
 import { tierSortKey } from './lib/core/pure.mjs';
 
 export const name = 'dsh-subagent-profile';
@@ -209,6 +211,17 @@ function createSharedCatalog(ctx) {
   });
 }
 
+// 读本插件 package.json version 供派发台账 provenance 使用。fail-soft：读取/解析
+// 失败回退 'unknown'，绝不阻断插件启动。
+function readPluginVersion() {
+  try {
+    const pkg = createRequire(import.meta.url)('./package.json');
+    return typeof pkg?.version === 'string' && pkg.version !== '' ? pkg.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 export async function apply(ctx) {
   // Enable/disable switch (default on, runtime-toggled by the settings page) +
   // profile registry — lib/profiles-store.mjs: createProfileStore. loadProfiles
@@ -224,6 +237,8 @@ export async function apply(ctx) {
   // 失败台账（stateFile 落盘 JSON，同进程共享同一实例）+ 总预算守卫（并发/token/在途）。
   const ledger = createFailureLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`), stateFile: join(home, 'subagent-profiles.failed-traces.json') });
   const guard = createDispatchGuard({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
+  // 派发台账（~/.dsh/subagent-evolution/dispatch.jsonl，JSONL 追加不可变）。默认开。
+  const evoLedger = createEvolutionLedger({ dshHome: home, pluginVersion: readPluginVersion(), warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
   // `dispatch` tool（defineTool schema + execute + syncTool 注册/注销）。Created
   // BEFORE the HTTP inject so createHttpRoutes can capture dispatch.syncTool.
   const dispatch = createDispatchTool({
@@ -236,6 +251,7 @@ export async function apply(ctx) {
     catalog,
     ledger,
     guard,
+    evoLedger,
   });
   // subagent-profiles service over the store's per-apply profiles Map.
   provideProfileService(ctx, store);
