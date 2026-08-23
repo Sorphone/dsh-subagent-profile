@@ -19,10 +19,14 @@ import {
   resolveChildAgentOptions,
   resolveChildDepth,
 } from './lib/shims.mjs';
-import { textFrom, stopReasonError, withPartialText, sanitizeProfile, GUIDANCE_PREFIX, assertHardLimits, computeContinuableAllow, pruneBlocks, assertResultSchemaConsistency } from './lib/pure.mjs';
+import { textFrom, stopReasonError, withPartialText, sanitizeProfile, GUIDANCE_PREFIX, computeContinuableAllow, pruneBlocks, assertResultSchemaConsistency } from './lib/pure.mjs';
 import { TOOL_ZH, TOOL_CATEGORY } from './lib/catalog.mjs';
 import { syncBundledPresets } from './lib/presets-sync.mjs';
 import { dshHome, BUILTIN_SEEDS, createProfileStore } from './lib/profiles-store.mjs';
+import { assertCostGuard } from './lib/cost-guard.mjs';
+import { resolveWhitelist } from './lib/whitelist.mjs';
+import { computeEffectiveAllow } from './lib/intersection.mjs';
+import { settleStart, DELEGATION_CONTEXT, buildDispatchMeta } from './lib/delegation.mjs';
 
 export const name = 'dsh-subagent-profile';
 export const inject = ['subagents', 'tools', 'agents'];
@@ -40,122 +44,13 @@ export const inject = ['subagents', 'tools', 'agents'];
 // Only the loopback interfaces may drive the settings HTTP routes.
 const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
-// --- module-level helpers (kept inline; the packages do not export them) ---
-
-// F5: runtime-derived cost guard. Two parts (SPEC §7.3):
-//   ① always-on hard caps (assertHardLimits, in lib/pure.mjs) — maxTokens /
-//      maxDepth are hard delegation caps, independent of the `llm` service, so
-//      they must NOT stop applying when `llm` is absent (the old `if (llm ===
-//      undefined) return` skipped them).
-//   ② llm capability — validates provider / model / reasoningEffort against the
-//      live provider directory. When the `llm` service is absent OR its provider
-//      directory is empty (an adapter without discovery), capability cannot be
-//      verified: per `allowFailOpen` (SPEC §12.1 migration switch) either
-//      fail-open compat (warn + skip; v1 数据迁移中) or fail-loud reject. A
-//      profile that requests none of provider/model/reasoningEffort has nothing
-//      to verify and always passes (valid in a headless deployment).
-// Used by both the provider's authoritative check and the dispatch tool's
-// pre-check. `allowFailOpen`/`logger` are injected because this function is
-// module-scoped and cannot reach the apply closure's `allowFailOpen`/`ctx.logger`.
-async function assertCostGuard(parent, profile, allowFailOpen, logger) {
-  // ① 硬上限 always-on（不依赖 llm）。
-  assertHardLimits(profile.maxTokens, profile.maxDepth);
-
-  // ② 仅当 profile 请求了需核验能力面的字段时才进入 llm 校验（无头/headless 部署下
-  //    persona-only / toolFilter-only 的 profile 合法，不应被 fail-loud 拒绝）。
-  const needsLlm = ['provider', 'model', 'reasoningEffort'].some(
-    (key) => typeof profile[key] === 'string' && profile[key].length > 0
-  );
-  if (!needsLlm) return;
-
-  const llm = parent.ctx.get('llm');
-  // ③ 目录为空检测：llm 存在但其 provider 目录为空（无发现能力）→ 无法核验。
-  let emptyDirectory = false;
-  if (llm !== undefined) {
-    try {
-      const providers = await llm.listProviders();
-      emptyDirectory = (providers ?? []).length === 0;
-    } catch {
-      emptyDirectory = true;
-    }
-  }
-  if (llm === undefined || emptyDirectory) {
-    if (allowFailOpen === true) {
-      logger.warn('llm 不可用：fail-open 兼容模式（v1 数据迁移中，建议保存一次配置以升级到 fail-loud）');
-      return;
-    }
-    throw new Error('dispatch: 模型能力不可验证：fail-loud 拒绝（可在配置中显式开启兼容模式）');
-  }
-
-  // ④ provider 注册校验（目录非空时才能判定「不在目录」）。
-  if (typeof profile.provider === 'string' && profile.provider.length > 0) {
-    const providers = await llm.listProviders();
-    if (!(providers ?? []).some((provider) => provider && provider.id === profile.provider)) {
-      throw new Error(`dispatch: provider "${profile.provider}" is not a registered provider`);
-    }
-  }
-  const effectiveProvider = profile.provider !== undefined ? profile.provider : parent.options.provider;
-  const effectiveModel = profile.model !== undefined ? profile.model : parent.options.model;
-  // ⑤ model 校验。resolveModelInfo does not reject unknown models (catalog
-  //    membership is advisory), so validate against the advertised catalog
-  //    instead. An EMPTY catalog (adapter without discovery) cannot be verified
-  //    and is skipped — 目录级空集已在 ③ 走 allowFailOpen 分支，此处仅兜底
-  //    per-provider 空目录。A non-empty catalog that does not advertise the model
-  //    fails loud. An unverifiable lookup (listModels(undefined) when no provider
-  //    is known) becomes a clean fail-loud error instead of leaking "undefined".
-  if (typeof profile.model === 'string' && profile.model.length > 0) {
-    let models;
-    try {
-      models = await llm.listModels(effectiveProvider);
-    } catch (error) {
-      throw new Error(`dispatch: cannot validate model "${profile.model}" without a provider: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    const listed = models ?? [];
-    const known = listed.length > 0 && listed.some((model) => model && (model.id === profile.model || model.name === profile.model));
-    if (listed.length > 0 && !known) {
-      throw new Error(`dispatch: model "${profile.model}" is not advertised by provider "${String(effectiveProvider)}"`);
-    }
-  }
-  // ⑥ reasoningEffort 校验。
-  if (typeof profile.reasoningEffort === 'string' && profile.reasoningEffort.length > 0) {
-    try {
-      await llm.resolveCallConfig({ provider: effectiveProvider, model: effectiveModel, reasoningEffort: profile.reasoningEffort });
-    } catch (error) {
-      throw new Error(`dispatch: reasoningEffort "${profile.reasoningEffort}" is not supported by provider "${String(effectiveProvider)}" model "${String(effectiveModel)}": ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-}
-
-// Settle one background one-shot run into a job outcome with the same
-// observability metadata the foreground path reports. Non-completed stop reasons
-// become failed (aborted => killed, shipped vocabulary) with partial output
-// attached; hard failures never reject the job.
-// `prune` is the result-recycle pre-clipper (§8.2): the caller (dispatch
-// execute) injects a closure that calls the host toolResultPruner.pruneContent
-// before textFrom; defaulting to identity keeps the background path safe when no
-// pruner is available.
-async function settleStart(start, signal, meta, prune = (blocks) => blocks) {
-  let run;
-  try {
-    run = await start;
-    const result = await run.result;
-    const failure = stopReasonError(result);
-    if (failure !== undefined) {
-      return { status: result.stopReason === 'aborted' ? 'killed' : 'failed', detail: withPartialText(failure, result.output), ...meta };
-    }
-    return { status: 'completed', output: textFrom(prune(result.output)), ...meta };
-  } catch (error) {
-    return signal.aborted ? { status: 'killed', ...meta } : { status: 'failed', detail: String(error), ...meta };
-  } finally {
-    // Release the child handle no matter how the result settled — run.result
-    // rejecting must not leak the subagent (same discipline as the foreground
-    // try/finally).
-    if (run !== undefined) await run.dispose().catch(() => {});
-  }
-}
-
-// Verbatim from the shipped SUBAGENT_DELEGATION_CONTEXT.
-const DELEGATION_CONTEXT = 'You are a delegated subagent: your permission scope was fixed when you were started and cannot be widened from inside this session — operations that require approval are rejected automatically. When the task needs access beyond that scope, do not retry the denied operation; state the limitation in your reply so the delegating agent can handle it.';
+// --- module-level helpers (moved to lib/ in Task 7b) ---
+// assertCostGuard → lib/cost-guard.mjs; settleStart / DELEGATION_CONTEXT /
+// buildDispatchMeta → lib/delegation.mjs; computeEffectiveAllow →
+// lib/intersection.mjs; FALLBACK_WHITELIST / resolveWhitelist →
+// lib/whitelist.mjs. All four modules are imported at the top of this file;
+// the remaining module-level bindings here are only LOOPBACKS and the
+// export surface.
 
 export async function apply(ctx) {
   // 0. Enable/disable switch: default on, toggled at runtime by the settings
@@ -175,16 +70,9 @@ export async function apply(ctx) {
   // in lib/catalog.mjs (imported at the top); the /options handler reads them
   // from the module-level bindings.
 
-  // F6: the target-preset whitelist is derived from the runtime roster, not
-  // hard-coded: system-trust presets when agentPresets exists, else the
-  // shipped fallback names.
-  const FALLBACK_WHITELIST = ['standard', 'code', 'minimal'];
-  async function resolveWhitelist(agentCtx) {
-    const agentPresets = agentCtx.get('agentPresets');
-    if (agentPresets === undefined) return FALLBACK_WHITELIST;
-    const presets = await agentPresets.list();
-    return (presets ?? []).filter((preset) => preset && preset.trust === 'system').map((preset) => preset.id);
-  }
+  // F6: the target-preset whitelist now lives in lib/whitelist.mjs (imported at
+  // the top): FALLBACK_WHITELIST + resolveWhitelist(agentPresets). The caller
+  // injects parent.ctx.get('agentPresets') (undefined → fallback, same semantics).
 
   // 1c. Self-install the bundled "orchestrator" agent preset into the DSH
   // agent-presets root so the mode appears in the new-session picker without
@@ -581,7 +469,7 @@ export async function apply(ctx) {
       // through the closure.
       const delegated = captureDelegatedPolicyOverrides(parent);
       // F6: authoritative preset whitelist check against the runtime roster.
-      const whitelist = new Set(await resolveWhitelist(parent.ctx));
+      const whitelist = new Set(await resolveWhitelist(parent.ctx.get('agentPresets')));
       if (typeof profile.preset === 'string' && profile.preset !== 'inherit' && !whitelist.has(profile.preset)) {
         throw new Error(`dispatch: preset "${profile.preset}" is not in the target-preset whitelist`);
       }
@@ -599,20 +487,17 @@ export async function apply(ctx) {
       // F8: agentPreset is recorded only when a preset roster exists
       // (non-rosterless), otherwise omitted entirely. This meta is CUSTOM —
       // not the shipped childSessionMeta — because a swap records
-      // profile.preset instead of the parent's composedPreset.
-      const meta = {
-        ...(parent.session.header.cwd !== undefined ? { cwd: parent.session.header.cwd } : {}),
-        ...(parentAgentPresets !== undefined
-          ? swapPreset
-            ? { agentPreset: profile.preset }
-            : parentComposed !== undefined
-              ? { agentPreset: parentComposed }
-              : {}
-          : {}),
+      // profile.preset instead of the parent's composedPreset. The pure
+      // assembly lives in lib/delegation.mjs: buildDispatchMeta.
+      const meta = buildDispatchMeta({
+        cwd: parent.session.header.cwd,
+        hasPresets: parentAgentPresets !== undefined,
+        swapPreset,
+        preset: profile.preset,
+        parentComposed,
         parentSession: parent.session.header.id,
-        origin: 'subagent',
-        delegationDepth: childDepth
-      };
+        childDepth
+      });
       // agentOptions: shipped resolveChildAgentOptions — parent route inherited
       // unless the profile overrides provider/model/maxTokens, stamped with the
       // child's own delegation depth.
@@ -645,17 +530,11 @@ export async function apply(ctx) {
             childPresets.composeFrom(childCtx, parent.ctx);
           }
           // ② Tool intersection (safety gate 1): parent set ∩ child set, minus
-          //    run_code, minus deny, then narrowed by allow when present.
+          //    run_code, minus deny, then narrowed by allow when present (pure
+          //    core in lib/intersection.mjs: computeEffectiveAllow).
           const parentNames = new Set(parent.ctx.tools.schemas(parent).map((schema) => schema.name));
           const childNames = childCtx.tools.schemas(childCtx.agent).map((schema) => schema.name);
-          let effective = childNames.filter((name) =>
-            parentNames.has(name) &&
-            name !== 'run_code' &&
-            !(profile.toolFilter !== undefined && profile.toolFilter.deny !== undefined && profile.toolFilter.deny.includes(name))
-          );
-          if (profile.toolFilter !== undefined && Array.isArray(profile.toolFilter.allow)) {
-            effective = effective.filter((name) => profile.toolFilter.allow.includes(name));
-          }
+          const effective = computeEffectiveAllow(parentNames, childNames, profile.toolFilter);
           // F4: shipped restrict does NOT throw on allow:[] — fail loud here so
           // the empty-intersection case is explicit (throw => setupAndPublish
           // rolls the creation back).
@@ -873,7 +752,7 @@ export async function apply(ctx) {
       // whitelist (F6); a preset equal to the parent's composed preset is
       // rewritten to 'inherit' (no swap).
       if (typeof merged.preset === 'string' && merged.preset !== 'inherit') {
-        const whitelist = new Set(await resolveWhitelist(parent.ctx));
+        const whitelist = new Set(await resolveWhitelist(parent.ctx.get('agentPresets')));
         if (!whitelist.has(merged.preset)) {
           throw new Error(`dispatch: preset "${merged.preset}" is not in the target-preset whitelist`);
         }
