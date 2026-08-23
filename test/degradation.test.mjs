@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { detectVersions, readPackageVersion } from '../lib/core/shims.mjs';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
+import { makeRouteHarness, callRoute } from './harness/routes.mjs';
 
 const mod = await import('../index.mjs');
 
@@ -55,38 +56,7 @@ test('detectVersions: 真实 junction 环境三包均解析出非 unknown 版本
 });
 
 // --- /options/versions 路由结构 ----------------------------------------------
-
-function makeRouteHarness() {
-  const routes = [];
-  const webServer = { register(config) { routes.push(config); return () => {}; } };
-  return { webServer, routes };
-}
-
-function makeReq(method, urlPath) {
-  return {
-    method,
-    url: `http://localhost/subagent-profiles${urlPath}`,
-    socket: { remoteAddress: '127.0.0.1' },
-    on() {},
-    destroy() {},
-  };
-}
-
-function makeRes() {
-  const state = { code: null, data: '' };
-  return {
-    state,
-    writeHead(code) { state.code = code; },
-    end(text) { state.data = text; },
-  };
-}
-
-async function callRoute(handler, method, urlPath) {
-  const req = makeReq(method, urlPath);
-  const res = makeRes();
-  await handler(req, res);
-  return { code: res.state.code, json: res.state.data ? JSON.parse(res.state.data) : null };
-}
+// 路由 harness 共享自 test/harness/routes.mjs（persist / degradation 共用）。
 
 test('/options/versions 路由：返回 {ok, versions, warnings} 结构', async () => {
   const iso = makeIsolatedDshHome();
