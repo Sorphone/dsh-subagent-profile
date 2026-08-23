@@ -130,8 +130,7 @@ dsh-subagent-profile/
 │   ├── preflight.mjs             # preflight: preset-tree reconciliation + no hardcoded version badge (zero-dep)
 │   └── leak-scan.mjs             # public-release gate: scans all history + worktree for sensitive patterns
 ├── docs/
-│   ├── screenshots/              # README screenshots
-│   └── measured-params.md        # measured-parameters backfill record (todo list §13 of the V2 spec)
+│   └── screenshots/              # README screenshots
 ├── test/                         # host-side tests (node:test, zero extra deps; 352 cases — bare subset in CI, junction local)
 │   ├── README.md / README.zh.md  # test directory guide (EN/ZH) — two-tier split explained
 │   ├── harness/ctx.mjs           # fake Cordis ctx + ~/.dsh isolation

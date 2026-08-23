@@ -130,8 +130,7 @@ dsh-subagent-profile/
 │   ├── preflight.mjs             # preflight：preset 树对账 + 无硬编码版本徽章（零依赖）
 │   └── leak-scan.mjs             # 公开发布门禁：全历史 + 工作区敏感模式扫描
 ├── docs/
-│   ├── screenshots/              # README 截图
-│   └── measured-params.md        # 待实测参数回填记录（V2 规格 §13 清单）
+│   └── screenshots/              # README 截图
 ├── test/                         # 宿主侧自动化测试（node:test，零新增依赖；352 用例——bare 子集 CI 跑、junction 档本机跑）
 │   ├── README.md / README.zh.md  # 测试目录说明（中英双语）——两档测试划分
 │   ├── harness/ctx.mjs           # 假宿主环境（fake ctx + ~/.dsh 隔离）
