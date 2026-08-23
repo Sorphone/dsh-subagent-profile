@@ -63,7 +63,7 @@ export default [
   },
   // catalog.mjs 数据表豁免（纯键值映射数据表豁免 + 完整性护栏，护栏在测试）
   {
-    files: ['lib/catalog.mjs'],
+    files: ['lib/core/catalog.mjs'],
     rules: {
       'max-lines-per-function': 'off', // 数据表本身无函数；防误报保险
     },

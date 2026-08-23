@@ -10,7 +10,7 @@ import { writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
-import { PERSONA_MAX_CHARS } from '../lib/pure.mjs';
+import { PERSONA_MAX_CHARS } from '../lib/core/pure.mjs';
 
 const mod = await import('../index.mjs');
 

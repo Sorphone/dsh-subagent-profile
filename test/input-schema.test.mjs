@@ -1,5 +1,5 @@
-// test/input-schema.test.mjs — 统一输入 schema 的纯函数单测。
-// 这些用例直接测 lib/pure.mjs 的 sanitizeProfile，不触碰
+﻿// test/input-schema.test.mjs — 统一输入 schema 的纯函数单测。
+// 这些用例直接测 lib/core/pure.mjs 的 sanitizeProfile，不触碰
 // index.mjs / fs —— 与 loadProfiles、/add 写路径共用同一个纯函数。
 
 import { test } from 'node:test';
@@ -10,7 +10,7 @@ import {
   GUIDANCE_PREFIX,
   MAX_TOKENS,
   MAX_DEPTH,
-} from '../lib/pure.mjs';
+} from '../lib/core/pure.mjs';
 
 test('sanitizeProfile: 非对象根返回空 clean + 一条根警告', () => {
   for (const bad of [null, undefined, 'x', 5, []]) {

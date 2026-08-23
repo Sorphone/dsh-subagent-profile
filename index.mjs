@@ -1,6 +1,6 @@
-// index.mjs — dsh-subagent-profile 宿主侧正式插件 bundle（只做装配）。
+﻿// index.mjs — dsh-subagent-profile 宿主侧正式插件 bundle（只做装配）。
 // 源自原型动态插件 `code.host` 主体；宿主导入面（registerTool/defineTool/
-// handle）收敛在 lib/shims.mjs，装配块按模块拆分驻留 lib/（catalog /
+// handle）收敛在 lib/core/shims.mjs，装配块按模块拆分驻留 lib/core/（catalog /
 // presets-sync / profiles-store / cost-guard / whitelist / intersection /
 // delegation / pure / shims / http-routes / profile-provider / dispatch-tool）。
 // apply 的装配辅助函数（syncBundledPresetsToHome / provideProfileService /
@@ -8,11 +8,11 @@
 // 门控逐字不变；`enabled` 始终经 getter 注入，门控读取当前值。
 
 import { join } from 'node:path';
-import { syncBundledPresets } from './lib/presets-sync.mjs';
-import { dshHome, createProfileStore } from './lib/profiles-store.mjs';
-import { createHttpRoutes } from './lib/http-routes.mjs';
-import { createProfileProvider } from './lib/profile-provider.mjs';
-import { createDispatchTool } from './lib/dispatch-tool.mjs';
+import { syncBundledPresets } from './lib/core/presets-sync.mjs';
+import { dshHome, createProfileStore } from './lib/core/profiles-store.mjs';
+import { createHttpRoutes } from './lib/core/http-routes.mjs';
+import { createProfileProvider } from './lib/core/profile-provider.mjs';
+import { createDispatchTool } from './lib/core/dispatch-tool.mjs';
 
 export const name = 'dsh-subagent-profile';
 export const inject = ['subagents', 'tools', 'agents'];
@@ -135,7 +135,7 @@ function registerSystemPromptSections(ctx, store, getEnabled) {
 
 // HTTP loopback routes for the Client settings UI (webServer.register ↔
 // client fetch; JSON only) — the routes themselves live in
-// lib/http-routes.mjs (imported above); this wiring only injects the
+// lib/core/http-routes.mjs (imported above); this wiring only injects the
 // per-apply deps. webServer is optional — a headless deployment keeps the
 // dispatch tool and drops only the settings page. webServer's activation
 // (listen) is async and may not be ready when this plugin's inject deps
@@ -167,7 +167,7 @@ export async function apply(ctx) {
   store.loadProfiles();
   // Self-install the bundled "orchestrator" preset (idempotent, fail-soft).
   syncBundledPresetsToHome(ctx);
-  // `dispatch` tool — lib/dispatch-tool.mjs: defineTool block (schema +
+  // `dispatch` tool — lib/core/dispatch-tool.mjs: defineTool block (schema +
   // execute), the result-schema consistency lock and the syncTool
   // register/unregister logic.
   // Created BEFORE the HTTP inject so createHttpRoutes can capture
@@ -184,7 +184,7 @@ export async function apply(ctx) {
   provideProfileService(ctx, store);
   // Gated system-prompt sections (profile directory + orchestrator mode).
   registerSystemPromptSections(ctx, store, () => enabled);
-  // `profile` subagent provider — lib/profile-provider.mjs:
+  // `profile` subagent provider — lib/core/profile-provider.mjs:
   // createProfileProvider registers the provider and returns the disposer.
   const disposeProvider = createProfileProvider({
     subagents: ctx.subagents,
@@ -193,7 +193,7 @@ export async function apply(ctx) {
     logger: ctx.logger,
   });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
-  // HTTP loopback routes for the Client settings UI — lib/http-routes.mjs.
+  // HTTP loopback routes for the Client settings UI — lib/core/http-routes.mjs.
   registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool);
   // Teardown: unregister the dispatch tool (if still registered).
   ctx.effect(() => dispatch.dispose);

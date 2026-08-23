@@ -1,5 +1,5 @@
-// test/catalog-integrity.test.mjs — 数据表完整性护栏。
-// lib/catalog.mjs 的 TOOL_ZH / TOOL_CATEGORY 是纯键值映射数据表（无控制流），
+﻿// test/catalog-integrity.test.mjs — 数据表完整性护栏。
+// lib/core/catalog.mjs 的 TOOL_ZH / TOOL_CATEGORY 是纯键值映射数据表（无控制流），
 // 因行门豁免 max-lines-per-function，代价是此处锁死其固定键集：
 //   * 固定键集断言（逐键列出）——任何增删改键都必须同步本文件；
 //   * 重复键自检——对象字面量重复键会被静默覆盖，此处以「期望键集 ⇔ 实际键集
@@ -9,7 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TOOL_ZH, TOOL_CATEGORY } from '../lib/catalog.mjs';
+import { TOOL_ZH, TOOL_CATEGORY } from '../lib/core/catalog.mjs';
 
 // TOOL_ZH 固定键集（当前 58 键；早期文档所称「60 键」已过期，实测 58）。
 const TOOL_ZH_KEYS = [

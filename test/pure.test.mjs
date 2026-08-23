@@ -1,10 +1,10 @@
-// test/pure.test.mjs — true unit tests for the import-free helpers extracted
-// into lib/pure.mjs. These are the only pure module functions; they
+﻿// test/pure.test.mjs — true unit tests for the import-free helpers extracted
+// into lib/core/pure.mjs. These are the only pure module functions; they
 // carry no @deepseek-ai dependency and no fs side effects.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { textFrom, toStopReason, stopReasonError, withPartialText } from '../lib/pure.mjs';
+import { textFrom, toStopReason, stopReasonError, withPartialText } from '../lib/core/pure.mjs';
 
 test('toStopReason maps turn-end reasons to the seam terminal vocabulary', () => {
   assert.equal(toStopReason({ kind: 'completed' }), 'completed');

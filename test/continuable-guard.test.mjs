@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeContinuableAllow } from '../lib/pure.mjs';
+import { computeContinuableAllow } from '../lib/core/pure.mjs';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
 
 const mod = await import('../index.mjs');
