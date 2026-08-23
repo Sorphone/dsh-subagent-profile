@@ -23,6 +23,10 @@
  *      2026-08-24 教训: 曾随提交公开,已全量清洗并由 leak-scan 提交信息门禁拦截）
  *   3. 提交前审核报告: leak-scan（内容+作者身份+内部标识词+提交信息）+ preflight +
  *      测试套件 + npm 包实包敏感扫描 + 公开面内网线索扫描,全部通过
+ *
+ * 开发/发布分离（2026-08-24 拍板）: 内部开发内容只保留在开发分支;合入 main 前
+ * 必须整理为公开口径（提交消息/文档/内部标识）;main 是唯一可推公开远端的发布线,
+ * 推公开远端前必须门禁全过 + 用户逐条审核
  */
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'

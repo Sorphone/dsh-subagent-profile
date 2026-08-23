@@ -10,3 +10,6 @@ docs/postmortem-qq-email-leak.md
 
 # 开发期参数校准记录（V2 spec §13 回填），仅本地留存、不随 git 发布（用户决定）
 docs/measured-params.md
+
+# 开发/发布工作流文档（方案 C，含内网细节），仅本地留存、不随 git 发布
+docs/dev-workflow.md
