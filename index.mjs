@@ -21,6 +21,8 @@ import { createCatalogCache } from './lib/core/catalog-cache.mjs';
 import { createFailureLedger } from './lib/core/decision-trace.mjs';
 import { createEvolutionLedger } from './lib/core/evolution-ledger.mjs';
 import { tierSortKey } from './lib/core/pure.mjs';
+import { resolveWhitelist, FALLBACK_WHITELIST } from './lib/core/whitelist.mjs';
+import { buildAdviceText } from './lib/core/evolution-summary.mjs';
 
 export const name = 'dsh-subagent-profile';
 export const inject = ['subagents', 'tools', 'agents'];
@@ -153,11 +155,21 @@ function profileSectionText(store, gate, context) {
 // orchestrator:mode section 文本（逐字保留；与 profiles 同门控）。
 const ORCHESTRATOR_MODE_TEXT = '本机已安装 dsh-subagent-profile 插件的「编排者模式」agent preset：新建会话的预设选择器中可选「编排者模式」。该模式把 Agent 定位为主协调者——拆解任务后按场景用 dispatch（内置 swap-standard=标准编码、researcher=调研检索，可在「子 Agent 方案」设置页自定义）与 subagent/subagent_fork/workflow 委派给子 Agent，再整合结果。preset 文件由插件维护于 ~/.dsh/.agent-presets，安装/升级时自动同步；用户提到「编排者模式 / orchestrator / 主协调模式」时即指本预设，请据此协作。';
 
+// 建议注入候选池：system-trust 白名单（agentPresets 可选；解析失败回退内置
+// 回退名单——fail-loud 检查在建议生成路径进行，不在此处）。
+async function resolveAdviceWhitelist(ctx) {
+  try {
+    return new Set(await resolveWhitelist(ctx.get('agentPresets')));
+  } catch {
+    return new Set(FALLBACK_WHITELIST);
+  }
+}
+
 // Directory section rendering the available profiles (systemPrompt's
 // section `text` accepts a function, as the shipped tool-subagent proves).
 // gate: `enabled` must be read live (getter), so /set-enabled toggles
 // apply immediately without a restart.
-function registerSystemPromptSections(ctx, store, getEnabled) {
+function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice, adviceEnv) {
   const pluginSystemPrompt = ctx.get('systemPrompt');
   if (pluginSystemPrompt === undefined) return;
   const gate = (context) => sectionGatePasses(ctx, getEnabled, context);
@@ -174,6 +186,23 @@ function registerSystemPromptSections(ctx, store, getEnabled) {
     order: 117,
     text: (context) => (gate(context) ? ORCHESTRATOR_MODE_TEXT : ''),
   });
+  // 只读建议段：门控 = orchestrator（sectionGatePasses）+ evolutionAdvice 开关。
+  // 只进父 Agent（复用同一门控）、默认关、只含确定性聚合数字与建议文案，不含派生原文。
+  // 生成异常 try/catch 兜底：fail-loud 检查（非 system 候选）落 warn 日志但绝不
+  // 阻断每次提示装配——损坏/手改的 summaries 不得让 orchestrator 会话无法启动。
+  pluginSystemPrompt.section({
+    name: 'evolution:advice',
+    order: 116.8,
+    text: (context) => {
+      if (!getEvolutionAdvice() || !gate(context)) return '';
+      try {
+        return buildAdviceText(adviceEnv);
+      } catch (error) {
+        adviceEnv.logger.warn(`[dsh-subagent-profile] evolution:advice 生成失败，本次不注入：${error instanceof Error ? error.message : String(error)}`);
+        return '';
+      }
+    },
+  });
 }
 
 // HTTP loopback routes for the Client settings UI (webServer.register ↔
@@ -184,7 +213,7 @@ function registerSystemPromptSections(ctx, store, getEnabled) {
 // (listen) is async and may not be ready when this plugin's inject deps
 // resolve, so register inside an inject sub-scope that waits for it
 // (ctx.get would read undefined at apply time).
-function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger) {
+function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, getEvolutionAdvice, setEvolutionAdvice) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(createHttpRoutes({
       webServer: scope.webServer,
@@ -194,6 +223,8 @@ function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, ca
       syncTool,
       catalog,
       ledger,
+      getEvolutionAdvice,
+      setEvolutionAdvice,
       logger: ctx.logger,
     }), 'dsh-subagent-profile: settings routes');
   });
@@ -223,12 +254,11 @@ function readPluginVersion() {
 }
 
 export async function apply(ctx) {
-  // Enable/disable switch (default on, runtime-toggled by the settings page) +
-  // profile registry — lib/profiles-store.mjs: createProfileStore. loadProfiles
-  // runs once at startup via the explicit call below (the factory does not auto-load).
+  // 插件开关（enabled 默认开、evolutionAdvice 只读建议默认关）+ profile 注册表；loadProfiles 启动时显式调用一次（工厂不自载）。
   const home = dshHome();
   const store = createProfileStore({ dshHome: home, logger: ctx.logger });
   let enabled = store.loadEnabled();
+  let evolutionAdvice = store.loadEvolutionAdvice();
   store.loadProfiles();
   // Self-install the bundled "orchestrator" preset (idempotent, fail-soft).
   syncBundledPresetsToHome(ctx);
@@ -255,8 +285,10 @@ export async function apply(ctx) {
   });
   // subagent-profiles service over the store's per-apply profiles Map.
   provideProfileService(ctx, store);
-  // Gated system-prompt sections (profile directory + orchestrator mode).
-  registerSystemPromptSections(ctx, store, () => enabled);
+  // 建议候选池（system-trust 白名单，fail-loud 在建议生成路径）+ 建议段门控开关。
+  const adviceWhitelist = await resolveAdviceWhitelist(ctx);
+  const adviceEnv = { summariesFile: join(home, 'subagent-evolution', 'summaries.json'), whitelist: adviceWhitelist, logger: ctx.logger };
+  registerSystemPromptSections(ctx, store, () => enabled, () => evolutionAdvice, adviceEnv);
   // `profile` subagent provider（createProfileProvider registers + returns disposer）。
   const disposeProvider = createProfileProvider({
     subagents: ctx.subagents,
@@ -267,6 +299,6 @@ export async function apply(ctx) {
   });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
   // HTTP loopback routes for the Client settings UI — lib/core/http-routes.mjs.
-  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger);
+  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, () => evolutionAdvice, (next) => { evolutionAdvice = next; });
   registerTeardown(ctx, dispatch, ledger, guard, home);
 }
