@@ -213,7 +213,7 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
 // (listen) is async and may not be ready when this plugin's inject deps
 // resolve, so register inside an inject sub-scope that waits for it
 // (ctx.get would read undefined at apply time).
-function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, getEvolutionAdvice, setEvolutionAdvice) {
+function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, getAudit, getEvolutionAdvice, setEvolutionAdvice) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(createHttpRoutes({
       webServer: scope.webServer,
@@ -223,6 +223,7 @@ function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, ca
       syncTool,
       catalog,
       ledger,
+      getAudit,
       getEvolutionAdvice,
       setEvolutionAdvice,
       logger: ctx.logger,
@@ -256,7 +257,11 @@ function readPluginVersion() {
 export async function apply(ctx) {
   // 插件开关（enabled 默认开、evolutionAdvice 只读建议默认关）+ profile 注册表；loadProfiles 启动时显式调用一次（工厂不自载）。
   const home = dshHome();
-  const store = createProfileStore({ dshHome: home, logger: ctx.logger });
+  // 派发台账 + 审计分级（subagent-evolution/dispatch.jsonl + ledger.meta.json，JSONL
+  // 追加不可变，meta 原子写）。须在 store 之前构造：store 的治理审计钩子指向其
+  // markGovernanceFailure（profile 持久化写失败 → 审计 degraded + 丢失计数）。
+  const evoLedger = createEvolutionLedger({ dshHome: home, pluginVersion: readPluginVersion(), warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
+  const store = createProfileStore({ dshHome: home, logger: ctx.logger, onGovernanceFailure: () => evoLedger.markGovernanceFailure() });
   let enabled = store.loadEnabled();
   let evolutionAdvice = store.loadEvolutionAdvice();
   store.loadProfiles();
@@ -267,8 +272,6 @@ export async function apply(ctx) {
   // 失败台账（stateFile 落盘 JSON，同进程共享同一实例）+ 总预算守卫（并发/token/在途）。
   const ledger = createFailureLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`), stateFile: join(home, 'subagent-profiles.failed-traces.json') });
   const guard = createDispatchGuard({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
-  // 派发台账（~/.dsh/subagent-evolution/dispatch.jsonl，JSONL 追加不可变）。默认开。
-  const evoLedger = createEvolutionLedger({ dshHome: home, pluginVersion: readPluginVersion(), warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
   // `dispatch` tool（defineTool schema + execute + syncTool 注册/注销）。Created
   // BEFORE the HTTP inject so createHttpRoutes can capture dispatch.syncTool.
   const dispatch = createDispatchTool({
@@ -283,9 +286,8 @@ export async function apply(ctx) {
     guard,
     evoLedger,
   });
-  // subagent-profiles service over the store's per-apply profiles Map.
+  // subagent-profiles service + 建议候选池 + 建议段门控开关。
   provideProfileService(ctx, store);
-  // 建议候选池（system-trust 白名单，fail-loud 在建议生成路径）+ 建议段门控开关。
   const adviceWhitelist = await resolveAdviceWhitelist(ctx);
   const adviceEnv = { summariesFile: join(home, 'subagent-evolution', 'summaries.json'), whitelist: adviceWhitelist, logger: ctx.logger };
   registerSystemPromptSections(ctx, store, () => enabled, () => evolutionAdvice, adviceEnv);
@@ -299,6 +301,6 @@ export async function apply(ctx) {
   });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
   // HTTP loopback routes for the Client settings UI — lib/core/http-routes.mjs.
-  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, () => evolutionAdvice, (next) => { evolutionAdvice = next; });
+  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; });
   registerTeardown(ctx, dispatch, ledger, guard, home);
 }
