@@ -14,6 +14,7 @@ import { createHttpRoutes } from './lib/core/http-routes.mjs';
 import { createProfileProvider } from './lib/core/profile-provider.mjs';
 import { createDispatchTool } from './lib/core/dispatch-tool.mjs';
 import { createCatalogCache } from './lib/core/catalog-cache.mjs';
+import { createFailureLedger } from './lib/core/decision-trace.mjs';
 import { tierSortKey } from './lib/core/pure.mjs';
 
 export const name = 'dsh-subagent-profile';
@@ -144,7 +145,7 @@ function registerSystemPromptSections(ctx, store, getEnabled) {
 // (listen) is async and may not be ready when this plugin's inject deps
 // resolve, so register inside an inject sub-scope that waits for it
 // (ctx.get would read undefined at apply time).
-function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog) {
+function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(createHttpRoutes({
       webServer: scope.webServer,
@@ -153,6 +154,7 @@ function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, ca
       setEnabled,
       syncTool,
       catalog,
+      ledger,
       logger: ctx.logger,
     }), 'dsh-subagent-profile: settings routes');
   });
@@ -182,6 +184,9 @@ export async function apply(ctx) {
   syncBundledPresetsToHome(ctx);
   // 进程级共享 catalog 快照（/options 三路由 + dispatch cost guard 共用）。
   const catalog = createSharedCatalog(ctx);
+  // 进程内失败台账（会话级内存 Map）：dispatch 失败路径记账 + /ledger/failures
+  // 路由读取。同进程 createDispatchTool / createHttpRoutes 共享同一实例。
+  const ledger = createFailureLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
   // `dispatch` tool — lib/core/dispatch-tool.mjs: defineTool block (schema +
   // execute), the result-schema consistency lock and the syncTool
   // register/unregister logic.
@@ -195,6 +200,7 @@ export async function apply(ctx) {
     logger: ctx.logger,
     subagents: ctx.subagents,
     catalog,
+    ledger,
   });
   // subagent-profiles service over the store's per-apply profiles Map.
   provideProfileService(ctx, store);
@@ -211,7 +217,8 @@ export async function apply(ctx) {
   });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
   // HTTP loopback routes for the Client settings UI — lib/core/http-routes.mjs.
-  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog);
-  // Teardown: unregister the dispatch tool (if still registered).
+  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger);
+  // Teardown: unregister the dispatch tool (if still registered) + 清空失败台账。
   ctx.effect(() => dispatch.dispose);
+  ctx.effect(() => ledger.clear);
 }
