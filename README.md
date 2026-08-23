@@ -103,22 +103,42 @@ dsh-subagent-profile/
 │   └── core/                     # host-side modules (lightweight layering)
 │       ├── pure.mjs              # dependency-free pure functions (sanitize / prune / guard math — unit-tested)
 │       ├── shims.mjs             # the single @deepseek-ai import facade (guards fail loud, helpers degrade softly)
-│       └── *.mjs                 # catalog / whitelist / intersection / cost-guard / delegation / profiles-store /
-│                                 #   presets-sync / http-routes / profile-provider / dispatch-tool
+│       ├── catalog.mjs           # tool-name → zh / category tables (zero-dep)
+│       ├── catalog-cache.mjs     # process-shared catalog snapshot (models / presets / tools, TTL cache)
+│       ├── cost-guard.mjs        # runtime capability checks (provider / model / reasoning effort)
+│       ├── decision-trace.mjs    # decision trace (gates / effective / settled) + failure ledger
+│       ├── delegation.mjs        # background one-shot settling + child usage collection
+│       ├── dispatch-gates.mjs    # pre-dispatch gates (whitelist / cost / intersection / budget)
+│       ├── dispatch-guard.mjs    # concurrency + per-parent token budget guard
+│       ├── dispatch-schema.mjs   # dispatch tool input/output schema declarations
+│       ├── dispatch-tool.mjs     # dispatch tool factory (defineTool + execute + syncTool)
+│       ├── escape.mjs            # escape-hatch allow store
+│       ├── evolution-ledger.mjs  # dispatch ledger (jsonl) + governance audit
+│       ├── evolution-summary.mjs # T1 aggregate summaries + advice text
+│       ├── http-routes.mjs       # settings loopback HTTP routes
+│       ├── intersection.mjs      # tool-intersection pure core
+│       ├── presets-sync.mjs      # bundled preset self-install (hash-gated sync)
+│       ├── profile-provider.mjs  # the `profile` subagent provider
+│       ├── profiles-store.mjs    # profile registry store + switch persistence
+│       └── whitelist.mjs         # system-trust preset whitelist
 ├── presets/orchestrator/         # bundled "orchestrator" agent preset (self-installed, synced on every startup)
 ├── cordis.patch.yml              # bundle patch: inserts the plugin row into the host composition
 ├── .gitea/workflows/ci.yml       # bare-CI (Gitea Actions; needs an Act runner on the server)
 ├── package.json                  # metadata, files whitelist, exports (test / test:bare / preflight scripts)
 ├── scripts/
 │   ├── release.mjs               # release helper (version bump / tag checks)
-│   └── preflight.mjs             # preflight: preset-tree reconciliation + no hardcoded version badge (zero-dep)
+│   ├── preflight.mjs             # preflight: preset-tree reconciliation + no hardcoded version badge (zero-dep)
+│   └── leak-scan.mjs             # public-release gate: scans all history + worktree for sensitive patterns
 ├── docs/
-│   └── screenshots/              # README screenshots
+│   ├── screenshots/              # README screenshots
+│   └── measured-params.md        # measured-parameters backfill record (todo list §13 of the V2 spec)
 ├── test/                         # host-side tests (node:test, zero extra deps; 352 cases — bare subset in CI, junction local)
 │   ├── README.md / README.zh.md  # test directory guide (EN/ZH) — two-tier split explained
 │   ├── harness/ctx.mjs           # fake Cordis ctx + ~/.dsh isolation
 │   ├── pure / input-schema / catalog-integrity.test.mjs   # bare tier (import-free, runs in bare CI)
-│   └── characterization / facade / gating / persist / recycle / cost-guard / continuable-guard.test.mjs  # junction tier (local only)
+│   └── *.test.mjs                # junction tier (local only): characterization / facade / gating / persist / recycle /
+│                                 #   cost-guard / continuable-guard / decision-trace / dispatch-guard / escape-hatch /
+│                                 #   evolution-* / csrf / label-preset-sync / percall-spec / trust-label / audit-meta / …
 ├── README.md / README.zh.md      # this document (EN/ZH)
 └── LICENSE
 ```

@@ -103,22 +103,42 @@ dsh-subagent-profile/
 │   └── core/                     # 宿主侧模块（轻量分层）
 │       ├── pure.mjs              # 无依赖纯函数（净化 / 剪枝 / 护栏计算——可单测）
 │       ├── shims.mjs             # @deepseek-ai 依赖唯一入口（facade：守卫型 fail-loud、功能映射型软降级）
-│       └── *.mjs                 # catalog / whitelist / intersection / cost-guard / delegation / profiles-store /
-│                                 #   presets-sync / http-routes / profile-provider / dispatch-tool
+│       ├── catalog.mjs           # 工具名 → 中文/分类数据表（零依赖）
+│       ├── catalog-cache.mjs     # 进程级共享 catalog 快照（模型/预设/工具，TTL 缓存）
+│       ├── cost-guard.mjs        # 运行时能力校验（provider / model / reasoningEffort）
+│       ├── decision-trace.mjs    # 决策轨迹（gates/effective/settled）+ 失败台账
+│       ├── delegation.mjs        # 后台 one-shot 结算 + 子会话 usage 收集
+│       ├── dispatch-gates.mjs    # 派发预检闸（白名单/成本/交集/预算）
+│       ├── dispatch-guard.mjs    # 并发 + 每父累计 token 预算守卫
+│       ├── dispatch-schema.mjs   # dispatch 工具输入/输出 schema 声明
+│       ├── dispatch-tool.mjs     # dispatch 工具工厂（defineTool + execute + syncTool）
+│       ├── escape.mjs            # 逃生舱放行集 store
+│       ├── evolution-ledger.mjs  # 派发台账（jsonl）+ 治理审计
+│       ├── evolution-summary.mjs # T1 聚合 summaries + 建议文案
+│       ├── http-routes.mjs       # 设置页 loopback HTTP 路由
+│       ├── intersection.mjs      # 工具交集纯函数核心
+│       ├── presets-sync.mjs      # bundled 预设自安装（哈希门控同步）
+│       ├── profile-provider.mjs  # `profile` 子 Agent provider
+│       ├── profiles-store.mjs    # profile 注册表 store + 开关持久化
+│       └── whitelist.mjs         # system-trust 预设白名单
 ├── presets/orchestrator/         # 内置「编排者模式」agent 预设（自安装，每次启动同步）
 ├── cordis.patch.yml              # bundle 补丁：把插件行插入宿主组成
 ├── .gitea/workflows/ci.yml       # bare-CI（Gitea Actions；需服务器装 Act runner）
 ├── package.json                  # 元数据、files 发布白名单、exports（test / test:bare / preflight scripts）
 ├── scripts/
 │   ├── release.mjs               # 发布脚本（版本 bump / tag 校验）
-│   └── preflight.mjs             # preflight：preset 树对账 + 无硬编码版本徽章（零依赖）
+│   ├── preflight.mjs             # preflight：preset 树对账 + 无硬编码版本徽章（零依赖）
+│   └── leak-scan.mjs             # 公开发布门禁：全历史 + 工作区敏感模式扫描
 ├── docs/
-│   └── screenshots/              # README 截图
+│   ├── screenshots/              # README 截图
+│   └── measured-params.md        # 待实测参数回填记录（V2 规格 §13 清单）
 ├── test/                         # 宿主侧自动化测试（node:test，零新增依赖；352 用例——bare 子集 CI 跑、junction 档本机跑）
 │   ├── README.md / README.zh.md  # 测试目录说明（中英双语）——两档测试划分
 │   ├── harness/ctx.mjs           # 假宿主环境（fake ctx + ~/.dsh 隔离）
 │   ├── pure / input-schema / catalog-integrity.test.mjs   # bare 档（import-free，bare CI 可跑）
-│   └── characterization / facade / gating / persist / recycle / cost-guard / continuable-guard.test.mjs  # junction 档（仅本机）
+│   └── *.test.mjs                # junction 档（仅本机）：characterization / facade / gating / persist / recycle /
+│                                 #   cost-guard / continuable-guard / decision-trace / dispatch-guard / escape-hatch /
+│                                 #   evolution-* / csrf / label-preset-sync / percall-spec / trust-label / audit-meta / …
 ├── README.md / README.zh.md      # 本文档（中英双语）
 └── LICENSE
 ```
