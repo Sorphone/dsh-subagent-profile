@@ -1,5 +1,5 @@
-// test/persist.test.mjs — V2 安全 P0-a 持久化：loadProfiles 兼容 v1/v2、
-// persistProfiles 原子写（tmp→rename）+ `persisted` 信号（D5/B1：写失败恒 HTTP
+// test/persist.test.mjs — 持久化：loadProfiles 兼容 v1/v2、
+// persistProfiles 原子写（tmp→rename）+ `persisted` 信号（写失败恒 HTTP
 // 200 + `{persisted:false}`，不 throw）。这些用例走 apply() 的 HTTP 写路由，复用
 // test/harness/ctx.mjs 的 createFakeCtx（用一个 capture webServer 拿 handler）
 // 与 makeIsolatedDshHome（隔离 ~/.dsh）。
@@ -10,7 +10,7 @@ import { writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
-import { PERSONA_MAX_CHARS } from '../lib/pure.mjs';
+import { PERSONA_MAX_CHARS } from '../lib/core/pure.mjs';
 
 const mod = await import('../index.mjs');
 

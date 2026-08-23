@@ -1,18 +1,19 @@
-// test/cost-guard.test.mjs — V2 安全 P0-b（SPEC §7.3）：
+﻿// test/cost-guard.test.mjs — cost guard 测试：
 //   * assertHardLimits —— 硬上限（maxTokens/maxDepth）纯函数单测。硬上限已从
 //     assertCostGuard 的 llm 依赖分支移出为 always-on，故不随 llm 缺失失效；
 //   * llm 缺失 / provider 目录为空 + allowFailOpen 分支 —— 经 fake ctx 的
-//     dispatch.execute 路径触发 assertCostGuard（该函数 module-scoped 未 export，
-//     只能从 execute/start 侧触发）。allowFailOpen=false → fail-loud throw；true →
-//     warn + 跳过（随后进入 fake 的 foreground 子 Agent 调用并在「not available」
-//     处拒绝，证明未 fail-loud）。空 provider 目录用 listProviders 返回 [] 表示，
-//     并断言 listModels 不可达（目录空在 model 校验之前短路）。
+//     dispatch.execute 路径触发 assertCostGuard（现从 lib/core/cost-guard.mjs export，
+//     但保持经 execute/start 侧触发，与真实调用路径一致）。allowFailOpen=false →
+//     fail-loud throw；true → warn + 跳过（随后进入 fake 的 foreground 子 Agent
+//     调用并在「not available」处拒绝，证明未 fail-loud）。空 provider 目录用
+//     listProviders 返回 [] 表示，并断言 listModels 不可达（目录空在 model 校验
+//     之前短路）。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assertHardLimits, MAX_TOKENS, MAX_DEPTH } from '../lib/pure.mjs';
+import { assertHardLimits, MAX_TOKENS, MAX_DEPTH } from '../lib/core/pure.mjs';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
 
 const mod = await import('../index.mjs');

@@ -4,6 +4,22 @@ Host-side automated tests built on the built-in `node:test` runner (zero new dep
 test package). `characterization.test.mjs` snapshots the observable `apply(ctx)` behavior;
 `pure.test.mjs` unit-tests the import-free pure functions.
 
+## Two tiers: bare vs junction
+
+The only `@deepseek-ai` import point is `lib/core/shims.mjs`, which is itself imported by
+`lib/core/dispatch-tool.mjs` → `index.mjs`. A bare CI environment (no `@deepseek-ai` installable)
+can therefore only run tests whose **entire import chain** stays within node builtins + local
+`lib/core` modules. The tiers:
+
+| Tier | Files | Tests | Why |
+|---|---|---|---|
+| **bare** (`npm run test:bare`) | `pure` / `input-schema` / `catalog-integrity` | 26 | Static imports only from `lib/core/pure.mjs` / `catalog.mjs` — import-free, no junction. Runs in bare CI. |
+| **junction** (local only) | `characterization` / `facade` / `gating` / `persist` / `recycle` / `cost-guard` / `continuable-guard` | 75 | Dynamically `await import('../index.mjs')` or `../lib/core/shims.mjs` → loads `@deepseek-ai`. Needs a junction host with `@deepseek-ai` installed; `npm test` / `node --test "test/**/*.test.mjs"` runs the full 101 locally. |
+
+Note that a module being import-free does **not** make its test bare: `cost-guard` / `persist` /
+`recycle` unit-test import-free modules but still dynamically import `index.mjs` in their bodies,
+so they stay junction. The tier is decided by the **test's actual import chain**, not the module's.
+
 ## Running
 
 ```bash

@@ -1,9 +1,9 @@
-// test/gating.test.mjs — V2 Token P0（SPEC §8.1）：
-// 系统提示门控——`dispatch:profiles` / `orchestrator:mode` 两段 section 仅在
+// test/gating.test.mjs — 系统提示门控：
+// `dispatch:profiles` / `orchestrator:mode` 两段 section 仅在
 // 「当前席 Agent 的 composedPreset === 'orchestrator'（预设特征主判据）且插件启用」
 // 时非空；否则返回 ''。
 //
-// 判据（以源码为准确认，见 docs/V2-SPEC.md §6.4 / §8.1）：
+// 判据（以源码为准确认）：
 //   section.text(context) 收到 `{ agent, scope, signal }`（host 经由
 //   assembleContextFor(agent, signal) 调用）。dispatch 工具由本 host 行注册，经
 //   dsh-tools schemas(scope) 的 global 继承起点对每个 agent 恒可见，故
@@ -12,7 +12,7 @@
 //   schemas 判据降为**否决**——schemas(agent) 明确不含 dispatch → 必空（防御性，
 //   生产恒含 dispatch，正常路径不触发）。
 //
-// 快照口径：characterization 的 systemPrompt 快照在 §8.1 主判据下需 composedPreset 桩
+// 快照口径：characterization 的 systemPrompt 快照在门控主判据下需 composedPreset 桩
 // + dispatch-capable toolSchemas 才能非空。
 
 import { test } from 'node:test';
@@ -67,7 +67,7 @@ async function disablePlugin(routes) {
 const ORCHESTRATOR_STUB = { composedPreset: () => 'orchestrator' };
 const STANDARD_STUB = { composedPreset: () => 'standard' };
 
-test('§8.1 gate: composedPreset=orchestrator + schemas 含 dispatch → 两段非空', async () => {
+test('gate: composedPreset=orchestrator + schemas 含 dispatch → 两段非空', async () => {
   const iso = makeIsolatedDshHome();
   try {
     const { ctx, records } = createFakeCtx({ services: { agentPresets: ORCHESTRATOR_STUB } });
@@ -79,7 +79,7 @@ test('§8.1 gate: composedPreset=orchestrator + schemas 含 dispatch → 两段�
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('§8.1 gate: schemas 含 dispatch 但 composedPreset=standard → 空（主判据拒绝）', async () => {
+test('gate: schemas 含 dispatch 但 composedPreset=standard → 空（主判据拒绝）', async () => {
   const iso = makeIsolatedDshHome();
   try {
     // default toolSchemas=[{name:'dispatch'}]（含 dispatch），但 preset 非 orchestrator。
@@ -91,7 +91,7 @@ test('§8.1 gate: schemas 含 dispatch 但 composedPreset=standard → 空（主
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('§8.1 gate: schemas 明确不含 dispatch → 空（否决，即便 composedPreset=orchestrator）', async () => {
+test('gate: schemas 明确不含 dispatch → 空（否决，即便 composedPreset=orchestrator）', async () => {
   const iso = makeIsolatedDshHome();
   try {
     const { ctx, records } = createFakeCtx({ toolSchemas: [], services: { agentPresets: ORCHESTRATOR_STUB } });
@@ -102,7 +102,7 @@ test('§8.1 gate: schemas 明确不含 dispatch → 空（否决，即便 compos
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('§8.1 gate: 无 agentPresets → 两段空（无法判别 preset 特征，保守不注入）', async () => {
+test('gate: 无 agentPresets → 两段空（无法判别 preset 特征，保守不注入）', async () => {
   const iso = makeIsolatedDshHome();
   try {
     const { ctx, records } = createFakeCtx(); // 默认 services 无 agentPresets
@@ -113,7 +113,7 @@ test('§8.1 gate: 无 agentPresets → 两段空（无法判别 preset 特征，
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('§8.1 gate: context 缺省（无 agent）但 composedPreset=orchestrator → 非空（回退插件 ctx）', async () => {
+test('gate: context 缺省（无 agent）但 composedPreset=orchestrator → 非空（回退插件 ctx）', async () => {
   const iso = makeIsolatedDshHome();
   try {
     const { ctx, records } = createFakeCtx({ services: { agentPresets: ORCHESTRATOR_STUB } });
@@ -125,7 +125,7 @@ test('§8.1 gate: context 缺省（无 agent）但 composedPreset=orchestrator �
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('§8.1 gate: enabled=false（composedPreset=orchestrator）→ 两段仍为空（第一道门）', async () => {
+test('gate: enabled=false（composedPreset=orchestrator）→ 两段仍为空（第一道门）', async () => {
   const iso = makeIsolatedDshHome();
   try {
     const { webServer, routes } = makeSetEnabledRoute();

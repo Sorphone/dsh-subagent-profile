@@ -1,12 +1,12 @@
-// test/harness/ctx.mjs — shared fake Cordis context for the V2 T0-1
-// characterization snapshot. See test/README.md.
+// test/harness/ctx.mjs — shared fake Cordis context for the characterization
+// snapshot. See test/README.md.
 //
-// Scope of this fake (SPEC §6.2): it mocks only the surfaces that the
+// Scope of this fake: it mocks only the surfaces that the
 // top-level `apply(ctx)` contract reaches in index.mjs — `inject` / `get` /
 // `provide` / `effect` / `logger` / `subagents.registerProvider` /
 // `tools.register` / `tools.schemas` / a `webServer`-provided scope /
 // `systemPrompt.section|context`. It deliberately does NOT provide a working
-// `agents.create` (SPEC says we must not mock it; instead the characterization
+// `agents.create` (we must not mock it; instead the characterization
 // test asserts apply() never touches it). provider.start / dispatch execute /
 // the HTTP handler are NOT invoked by apply(), so this fake does not model
 // them; those are explicitly out of scope for the snapshot and are asserted to
@@ -56,8 +56,8 @@ function makeDisposer() {
 // apply() registers the settings route and the systemPrompt sections; override
 // them to exercise the optional branches (e.g. no systemPrompt => no sections).
 // `options.toolSchemas` overrides the array returned by `ctx.tools.schemas()`
-// (default `[{ name: 'dispatch' }]` — a dispatch-capable agent, so the §8.1
-// prompt gate passes in the default characterization snapshot). Pass `[]` to
+// (default `[{ name: 'dispatch' }]` — a dispatch-capable agent, so the prompt
+// gate passes in the default characterization snapshot). Pass `[]` to
 // simulate a non-dispatch-capable agent. `options.subagentsStart` overrides
 // `ctx.subagents.start` (a fake parent-agent driver for recycle/execute tests).
 function createFakeCtx(options = {}) {
@@ -160,7 +160,7 @@ function createFakeCtx(options = {}) {
       restrict() { throw new Error('ctx.tools.restrict is not available in the characterization fake'); }
     },
     agents: {
-      // Not implemented (SPEC §6.2). Present only as a tripwire: if apply()
+      // Not implemented. Present only as a tripwire: if apply()
       // ever reaches it at the top level, this throws loudly and bumps the
       // counter, which the characterization test asserts stays at 0.
       create() { records.agentCreateCalls += 1; throw new Error('ctx.agents.create is not implemented in the characterization fake — apply() must not reach it'); }

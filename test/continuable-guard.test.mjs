@@ -1,12 +1,12 @@
-// test/continuable-guard.test.mjs — V2 安全 P0-b（SPEC §7.1）：
-// computeContinuableAllow —— continuable 分支的闭集 allow 预加工
-// （父集 − run_code − deny，∩ allow；空集 fail-loud throw）。
-// 纯函数用例不触碰 index.mjs / fs；文末另加一条经 fake ctx 的 dispatch.execute
-// 集成用例：验证 enabled=false 时 continuable 分支在顶部 fail-loud（§7.1 第 2 条）。
+// test/continuable-guard.test.mjs — computeContinuableAllow：
+// continuable 分支的闭集 allow 预加工（父集 − run_code − deny，∩ allow；
+// 空集 fail-loud throw）。纯函数用例不触碰 index.mjs / fs；文末另加一条经
+// fake ctx 的 dispatch.execute 集成用例：验证 enabled=false 时 continuable
+// 分支在顶部 fail-loud。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeContinuableAllow } from '../lib/pure.mjs';
+import { computeContinuableAllow } from '../lib/core/pure.mjs';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
 
 const mod = await import('../index.mjs');
@@ -122,7 +122,7 @@ test('continuable: enabled=false 时 dispatch 拒绝（插件已禁用）', asyn
     assert.equal(resp.code, 200);
     assert.equal(resp.json.enabled, false);
     // 禁用后走 continuable 分支：分支顶部 !enabled 必须 fail-loud —— 这是对
-    // provider start 只拦 `start` 不拦 `startContinuable` 的插件侧兜底（§7.1）。
+    // provider start 只拦 `start` 不拦 `startContinuable` 的插件侧兜底。
     const parent = { ctx: { get: () => undefined }, options: {} };
     await assert.rejects(
       () => tool.execute({ prompt: 'x', continuable: true }, { agent: parent, signal: undefined }),

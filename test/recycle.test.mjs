@@ -1,10 +1,10 @@
-// test/recycle.test.mjs — V2 Token P0（SPEC §8.2 / §8.4 / R1）：
+// test/recycle.test.mjs — 结果回收与结果 schema 一致性：
 //   * pruneBlocks —— 结果回收默认剪枝纯函数：有 toolResultPruner.pruneContent 时
 //     在 textFrom 之前预剪（返回裁剪结果）；pruner 缺失 / 内置打回 null / 抛错 /
 //     非数组内容时回退为不剪（剪枝是增强、非硬依赖）。
 //   * envelope 参数 —— 工具 schema 暴露 boolean 以作字段契约（预留），execute
 //     不消费它（当前不生效）。
-//   * assertResultSchemaConsistency —— 锁定 R1 closed oneOf：三分支共享元数据
+//   * assertResultSchemaConsistency —— 锁定 closed oneOf：三分支共享元数据
 //     (profile/preset/provider/model/reasoningEffort/ignored) 键集一致；构造
 //     不一致（某分支漏 ignored 等）即 throw。
 //
@@ -13,7 +13,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pruneBlocks, assertResultSchemaConsistency } from '../lib/pure.mjs';
+import { pruneBlocks, assertResultSchemaConsistency } from '../lib/core/pure.mjs';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
 
 const mod = await import('../index.mjs');
@@ -22,7 +22,7 @@ const mod = await import('../index.mjs');
 
 test('pruneBlocks: pruner 存在 → 返回 pruneContent 结果（裁剪生效）', () => {
   const blocks = [{ type: 'text', text: 'long'.repeat(3000) }];
-  const pruner = { pruneContent: (b) => [{ type: 'text', text: 'PRUNED' }] };
+  const pruner = { pruneContent: () => [{ type: 'text', text: 'PRUNED' }] };
   assert.deepEqual(pruneBlocks(blocks, pruner), [{ type: 'text', text: 'PRUNED' }]);
 });
 
@@ -178,7 +178,7 @@ test('前台回收：无 toolResultPruner → 不剪，输出为完整文本', a
   } finally { iso.restore(); iso.teardown(); }
 });
 
-// ---- §8.4 continuable 可见性：返回 reasoningEffort + ignored -----------------
+// ---- continuable 可见性：返回 reasoningEffort + ignored ---------------------
 
 function makeContinuableParent() {
   // 提供 llm（让 assertCostGuard 对 reasoningEffort 的校验通过）与 tools.schemas
@@ -197,7 +197,7 @@ function makeContinuableParent() {
   };
 }
 
-test('§8.4 continuable 返回：preset=inherit + reasoningEffort(请求值) + ignored 列出被丢弃项', async () => {
+test('continuable 返回：preset=inherit + reasoningEffort(请求值) + ignored 列出被丢弃项', async () => {
   const iso = makeIsolatedDshHome();
   try {
     const startContinuable = async () => ({ childId: 'child-1' });

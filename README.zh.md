@@ -4,6 +4,7 @@
 <div align="center">
   <b style="font-size: 1.15em;">子 Agent 派发方案化插件 —— 用对的人（预设 / 模型 / 推理强度）干对的事</b><br /><br />
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" />
+  <img alt="Version: v0.2.0" src="https://img.shields.io/badge/Version-v0.2.0-blue.svg" />
   <img alt="npm" src="https://img.shields.io/npm/v/dsh-subagent-profile.svg" />
   <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.0--rc.6%20~%200.1.1--rc.2-blue.svg" />
 </div>
@@ -99,19 +100,25 @@ dsh-subagent-profile/
 ├── index.mjs                     # 宿主侧：插件本体（dispatch 工具、profile provider、服务、HTTP 路由）
 ├── lib/
 │   ├── client.js                 # 浏览器侧：设置页 + dispatch 工具调用卡片
-│   ├── pure.mjs                  # 无依赖纯函数（净化 / 剪枝 / 护栏计算——可单测）
-│   └── shims.mjs                 # @deepseek-ai 依赖唯一入口（facade：守卫型 fail-loud、功能映射型软降级）
+│   └── core/                     # 宿主侧模块（轻量分层）
+│       ├── pure.mjs              # 无依赖纯函数（净化 / 剪枝 / 护栏计算——可单测）
+│       ├── shims.mjs             # @deepseek-ai 依赖唯一入口（facade：守卫型 fail-loud、功能映射型软降级）
+│       └── *.mjs                 # catalog / whitelist / intersection / cost-guard / delegation / profiles-store /
+│                                 #   presets-sync / http-routes / profile-provider / dispatch-tool
 ├── presets/orchestrator/         # 内置「编排者模式」agent 预设（自安装，每次启动同步）
 ├── cordis.patch.yml              # bundle 补丁：把插件行插入宿主组成
-├── package.json                  # 元数据、files 发布白名单、exports
-├── scripts/release.mjs           # 发布脚本（版本 bump / tag 校验）
+├── .gitea/workflows/ci.yml       # bare-CI（Gitea Actions；需服务器装 Act runner）
+├── package.json                  # 元数据、files 发布白名单、exports（test / test:bare / preflight scripts）
+├── scripts/
+│   ├── release.mjs               # 发布脚本（版本 bump / tag 校验）
+│   └── preflight.mjs             # preflight：preset 树对账 + README 徽章 == version（零依赖）
 ├── docs/
 │   └── screenshots/              # README 截图
-├── test/                         # 宿主侧自动化测试（node:test，零新增依赖；96 用例）
-│   ├── README.md / README.zh.md  # 测试目录说明（中英双语）
+├── test/                         # 宿主侧自动化测试（node:test，零新增依赖；101 用例 = 26 bare + 75 junction）
+│   ├── README.md / README.zh.md  # 测试目录说明（中英双语）——两档测试划分
 │   ├── harness/ctx.mjs           # 假宿主环境（fake ctx + ~/.dsh 隔离）
-│   ├── characterization.test.mjs # apply() 行为快照
-│   └── *.test.mjs                # pure / input-schema / persist / continuable-guard / cost-guard / gating / recycle / facade
+│   ├── pure / input-schema / catalog-integrity.test.mjs   # bare 档（import-free，bare CI 可跑）
+│   └── characterization / facade / gating / persist / recycle / cost-guard / continuable-guard.test.mjs  # junction 档（仅本机）
 ├── README.md / README.zh.md      # 本文档（中英双语）
 └── LICENSE
 ```
@@ -119,6 +126,11 @@ dsh-subagent-profile/
 ## 贡献
 
 发现 Bug 或有新想法?欢迎[提 Issue](https://github.com/muzyLink/dsh-subagent-profile/issues)或提交 Pull Request,任何形式的贡献都欢迎。
+
+### CI（bare）与 preflight
+
+- **Gitea Actions**（`.gitea/workflows/ci.yml`）：`push` / `pull_request` 到 `v2-midterm` / `main` 时运行 **bare-CI** 子集——从不加载 `@deepseek-ai` 的测试（`npm run test:bare`：pure / input-schema / catalog-integrity）、`node --check` 全仓库语法检查、eslint 行门（eslint 在仓库外隔离安装，因裸环境装不到 `@deepseek-ai` devDependencies）、以及 `npm run preflight`。**启用 Gitea Actions 需服务器装 Act runner**（注册时带上 `ubuntu-latest` 标签），runner 就绪后本工作流自动生效。依赖 junction 的测试（characterization / facade / gating / persist / recycle / cost-guard / continuable-guard）仅本机跑——两档测试的划分与理由见 `test/README.zh.md`。
+- **Preflight**（`npm run preflight`）：零依赖自检——① `presets/` 与全新 `$DSH_HOME/.agent-presets` 派生树做 byte 一致集合对账（双向；绝不写真实 `~/.dsh`）；② 断言 README 版本徽章（Hero 区 `v<version>`）与 `package.json` 的 `version` 一致。非零退出即漂移，发布前修复后重跑。
 
 如果这个插件帮到了你,欢迎在 GitHub 上点个 ⭐,让更多人看到它。
 
