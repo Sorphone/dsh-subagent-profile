@@ -130,7 +130,7 @@ dsh-subagent-profile/
 ### CI（bare）与 preflight
 
 - **Gitea Actions**（`.gitea/workflows/ci.yml`）：`push` / `pull_request` 到 `v2-midterm` / `main` 时运行 **bare-CI** 子集——从不加载 `@deepseek-ai` 的测试（`npm run test:bare`：pure / input-schema / catalog-integrity）、`node --check` 全仓库语法检查、eslint 行门（eslint 在仓库外隔离安装，因裸环境装不到 `@deepseek-ai` devDependencies）、以及 `npm run preflight`。**启用 Gitea Actions 需服务器装 Act runner**（注册时带上 `ubuntu-latest` 标签），runner 就绪后本工作流自动生效。依赖 junction 的测试（characterization / facade / gating / persist / recycle / cost-guard / continuable-guard）仅本机跑——两档测试的划分与理由见 `test/README.zh.md`。
-- **Preflight**（`npm run preflight`）：零依赖自检——① `presets/` 与全新 `$DSH_HOME/.agent-presets` 派生树做 byte 一致集合对账（双向；绝不写真实 `~/.dsh`）；② 断言 README 不含硬编码版本徽章（`badge/Version-v…`；版本展示由 npm 徽章自动跟随发布版本）。非零退出即漂移，发布前修复后重跑。
+- **Preflight**（`npm run preflight`）：零依赖自检——① `presets/` 与全新 `$DSH_HOME/.agent-presets` 派生树做 byte 一致集合对账（双向；绝不写真实 `~/.dsh`）；② 断言 README 不含硬编码版本徽章（版本展示由 npm 徽章自动跟随发布版本）。非零退出即漂移，发布前修复后重跑。
 
 如果这个插件帮到了你,欢迎在 GitHub 上点个 ⭐,让更多人看到它。
 
