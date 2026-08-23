@@ -14,6 +14,7 @@ import { createHttpRoutes } from './lib/core/http-routes.mjs';
 import { createProfileProvider } from './lib/core/profile-provider.mjs';
 import { createDispatchTool } from './lib/core/dispatch-tool.mjs';
 import { createCatalogCache } from './lib/core/catalog-cache.mjs';
+import { tierSortKey } from './lib/core/pure.mjs';
 
 export const name = 'dsh-subagent-profile';
 export const inject = ['subagents', 'tools', 'agents'];
@@ -99,6 +100,7 @@ function profileSectionText(store, gate, context) {
   if (!gate(context)) return '';
   const rows = [...store.profiles.values()]
     .filter((p) => p.enabled !== false)
+    .sort((a, b) => tierSortKey(a.tokenTier) - tierSortKey(b.tokenTier))
     .map((p) => {
       const desc = typeof p.description === 'string' && p.description.length > 0 ? `"${p.description}"` : '(无描述)';
       return `- ${p.id}: ${desc}${p.preset !== undefined ? ` (preset: ${p.preset})` : ''}`;
