@@ -362,6 +362,27 @@ test('execute 后台：结果含 trace、execution.kind=background、无 settled
   } finally { iso.restore(); iso.teardown(); }
 });
 
+test('execute 后台 + 父无 session：结果为 lossless JSON（undefined 已清理，宿主校验前提）', async () => {
+  const iso = makeIsolatedDshHome();
+  try {
+    const jobs = { start: () => 'job-1' };
+    const { ctx, records } = createFakeCtx({ services: { jobs } });
+    await mod.apply(ctx);
+    const tool = dispatchTool(records);
+    const noSessionParent = { ctx: { get: () => undefined }, options: {} };
+    const out = await tool.execute({ prompt: 'task', run_in_background: true }, { agent: noSessionParent, signal: undefined });
+    // 宿主对工具结果做 lossless JSON 校验：JSON 往返必须逐层一致，undefined 属性
+    // 必须已删除、数组 undefined 元素必须已置 null。
+    assert.deepEqual(JSON.parse(JSON.stringify(out)), out, '结果必须 lossless JSON');
+    assert.equal('settled' in out.decisionTrace, false, 'undefined 占位键已删除');
+    assert.equal('parentSessionId' in out.decisionTrace.execution, false, 'undefined 值属性已删除');
+    const costGate = out.decisionTrace.gates.find((g) => g.name === 'cost');
+    assert.ok(costGate, 'cost 闸存在');
+    assert.deepEqual(costGate.output.checks.map((c) => c.field), ['maxTokens', 'maxDepth', 'llm'], 'checks 数组元素保序（无 session 父 → llm 缺失条目）');
+    assert.equal('input' in costGate.output.checks[0], false, 'checks 数组元素内 undefined 属性已删除');
+  } finally { iso.restore(); iso.teardown(); }
+});
+
 test('execute 失败路径：非法 preset 原错误文案不变 + 台账出现 fail 闸记录', async () => {
   const iso = makeIsolatedDshHome();
   try {
