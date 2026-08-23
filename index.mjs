@@ -106,7 +106,7 @@ function profileSectionText(store, gate, context) {
       return `- ${p.id}: ${desc}${p.preset !== undefined ? ` (preset: ${p.preset})` : ''}`;
     });
   if (rows.length === 0) return '';
-  const note = '- 别把 1-2 步即可自查/可搜完的小事委派出去 —— 几分钟内能自查完的直接做。';
+  const note = '- 选择方案时先匹配任务复杂度与方案描述的能力边界，成本只在能力都胜任的方案之间比较——复杂任务不得为省 token 改用能力不足的便宜方案。\n- 别把 1-2 步即可自查/可搜完的小事委派出去 —— 几分钟内能自查完的直接做。';
   return `Available dispatch profiles (dispatch.profile):\n${rows.join('\n')}\n${note}`;
 }
 

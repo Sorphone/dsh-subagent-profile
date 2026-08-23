@@ -109,6 +109,8 @@ test('systemPrompt.section: registers dispatch:profiles and orchestrator:mode', 
   assert.match(text, /Available dispatch profiles/);
   // 一行行为规则进门控 profiles section（非常开 persona 注入）。
   assert.match(text, /别把 1-2 步即可自查\/可搜完的小事委派出去/);
+  // 选型规则：先匹配能力、再比成本（钉死便宜优先排序的副作用）。
+  assert.match(text, /选择方案时先匹配任务复杂度与方案描述的能力边界/);
   // 引号引用：description 在显示行被双引号包裹。
   assert.match(text, /swap-standard: "切换到 standard 预设的完整编码工具集。/);
   assert.match(text, /researcher: "关闭深度推理省 token，继承父工具。/);

@@ -10,60 +10,12 @@ import { writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
+import { makeRouteHarness, callRoute } from './harness/routes.mjs';
 import { PERSONA_MAX_CHARS } from '../lib/core/pure.mjs';
 
 const mod = await import('../index.mjs');
 
-// --- HTTP harness ----------------------------------------------------------
-// A capture webServer so apply()'s inject scope actually registers the settings
-// route and hands us the handler, which the tests drive with mock req/res.
-function makeRouteHarness() {
-  const routes = [];
-  const webServer = {
-    register(config) {
-      routes.push(config);
-      return () => {};
-    },
-  };
-  return { webServer, routes };
-}
-
-function makeReq(method, urlPath, body) {
-  const listeners = { data: [], end: [], error: [] };
-  const req = {
-    method,
-    url: `http://localhost/subagent-profiles${urlPath}`,
-    socket: { remoteAddress: '127.0.0.1' },
-    on(event, fn) { (listeners[event] ??= []).push(fn); },
-    destroy() {},
-  };
-  const bodyText = body === undefined ? '' : JSON.stringify(body);
-  return {
-    req,
-    feed() {
-      if (bodyText.length > 0) for (const fn of listeners.data) fn(Buffer.from(bodyText));
-      for (const fn of listeners.end) fn();
-    },
-  };
-}
-
-function makeRes() {
-  const state = { code: null, data: '' };
-  return {
-    state,
-    writeHead(code) { state.code = code; },
-    end(text) { state.data = text; },
-  };
-}
-
-async function callRoute(handler, method, urlPath, body) {
-  const { req, feed } = makeReq(method, urlPath, body);
-  const res = makeRes();
-  const p = handler(req, res);
-  feed();
-  await p;
-  return { code: res.state.code, json: res.state.data ? JSON.parse(res.state.data) : null };
-}
+// HTTP harness 已上提 test/harness/routes.mjs（persist / degradation 共用）。
 
 // apply() with a capture webServer; returns the route handler + the provided
 // subagent-profiles service (to observe the in-memory registry post-load).
