@@ -144,12 +144,6 @@ Found a bug or have an idea? [Open an issue](https://github.com/muzyLink/dsh-sub
 
 If this plugin has been useful to you, please give it a ⭐ on GitHub — it helps others find it.
 
-## CI & release gates
-
-- **CI** (`.gitea/workflows/ci.yml`, Gitea Actions): on push to `main`, runs the **bare** test subset (tests whose import chain never loads `@deepseek-ai`), syntax checks, eslint, `preflight` and `leak-scan`. Tests that do load `@deepseek-ai` (junction tier) run locally only — see `test/README.md` for the split.
-- **Preflight** (`npm run preflight`): zero-dep release gate — reconciles the bundled `presets/` tree against a fresh `$DSH_HOME/.agent-presets` tree, and asserts the READMEs carry no hardcoded version badge.
-- **Leak scan** (`npm run leak-scan`): blocks release when history or worktree contains private addresses, credentials, or non-noreply commit identities.
-
 ## Credits
 
 The bundled `orchestrator` agent preset was inspired by [dsh-liangshen](https://github.com/zhu1090093659/dsh-web-ui/tree/main/packages/dsh-liangshen) (梁神模式) from [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui), licensed under Apache-2.0. Thanks to its author for the great work.

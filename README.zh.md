@@ -144,12 +144,6 @@ dsh-subagent-profile/
 
 如果这个插件帮到了你,欢迎在 GitHub 上点个 ⭐,让更多人看到它。
 
-## CI 与发布门禁
-
-- **CI**（`.gitea/workflows/ci.yml`，Gitea Actions）：push 到 `main` 时运行 **bare** 测试子集（import 链从不加载 `@deepseek-ai` 的测试）、语法检查、eslint、`preflight` 与 `leak-scan`。加载 `@deepseek-ai` 的 junction 档测试仅本机跑——两档划分见 `test/README.md`。
-- **Preflight**（`npm run preflight`）：零依赖发布门禁——`presets/` 与全新 `$DSH_HOME/.agent-presets` 派生树对账，且断言 README 不含硬编码版本徽章。
-- **Leak scan**（`npm run leak-scan`）：历史或工作区含私网地址、凭据或非 noreply 提交身份时阻止发布。
-
 ## 致谢
 
 内置的 `orchestrator` 编排者预设的构成方式参考了 [dsh-liangshen（梁神模式）](https://github.com/zhu1090093659/dsh-web-ui/tree/main/packages/dsh-liangshen)（出自 [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui)，Apache-2.0 许可）。感谢作者的出色工作。
