@@ -21,7 +21,7 @@ import { dirname, join } from 'node:path'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
 const PKG_PATH = join(ROOT, 'package.json')
-const REMOTE = 'github' // 公开发布走 GitHub remote(origin 是内网 Gitea,不推)
+const REMOTE = 'github' // 公开发布只推 github remote（不推 origin）
 const REGISTRY = 'https://registry.npmjs.org'
 
 const args = process.argv.slice(2)
