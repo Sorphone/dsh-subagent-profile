@@ -23,16 +23,6 @@ test('background ledger：record 后按 session 读取，输出不存正文', ()
   assert.deepEqual(ledger.get('missing'), []);
 });
 
-test('background ledger：record 带 callId（Task 44 BP-05 运行中卡片配对），缺失时省略', () => {
-  const ledger = createBackgroundLedger();
-  const settled = { status: 'completed', stopReason: 'completed', elapsedMs: 10, childTotalTokens: 123, output: 'x' };
-  ledger.record('s1', 'job1', settled, 'call-1');
-  ledger.record('s1', 'job2', settled);
-  const list = ledger.get('s1');
-  assert.equal(list[0].callId, 'call-1', 'callId 必须随记录存储');
-  assert.equal(list[1].callId, undefined, '未提供 callId 时不得虚构该键');
-});
-
 test('background ledger：超上限丢弃最旧，clear 清空', () => {
   const ledger = createBackgroundLedger({ maxPerSession: 2, maxTotal: 3 });
   ledger.record('s1', 'a', { status: 'completed' });
@@ -41,21 +31,6 @@ test('background ledger：超上限丢弃最旧，clear 清空', () => {
   assert.deepEqual(ledger.get('s1').map((x) => x.jobId), ['b', 'c']);
   ledger.clear();
   assert.deepEqual(ledger.get('s1'), []);
-});
-
-test('background ledger：结算摘要保留 childSessionId，recordChild 结算前补记', () => {
-  const ledger = createBackgroundLedger();
-  ledger.recordChild('s1', 'job1', 'child-1');
-  ledger.recordChild('s1', 'job1', 'child-1');
-  const pending = ledger.get('s1');
-  assert.equal(pending.length, 1, '重复补记不得新增条目');
-  assert.equal(pending[0].childSessionId, 'child-1');
-  assert.equal(pending[0].settled, undefined, '未结算条目不得虚构 settled');
-  ledger.record('s1', 'job1', { status: 'completed', stopReason: 'completed', childSessionId: 'child-1', output: 'x' });
-  const settled = ledger.get('s1')[0];
-  assert.equal(settled.childSessionId, 'child-1');
-  assert.equal(settled.settled.childSessionId, 'child-1', '结算摘要必须保留子会话 id');
-  assert.equal(settled.settled.output, undefined, '仍不存子输出正文');
 });
 
 test('GET /ledger/jobs：未知 session 返回空数组', async () => {

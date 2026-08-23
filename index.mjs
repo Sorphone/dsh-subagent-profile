@@ -20,6 +20,7 @@ import { createDispatchGuard } from './lib/core/dispatch-guard.mjs';
 import { createCatalogCache } from './lib/core/catalog-cache.mjs';
 import { createFailureLedger } from './lib/core/decision-trace.mjs';
 import { createEvolutionLedger } from './lib/core/evolution-ledger.mjs';
+import { createBackgroundLedger } from './lib/core/background-ledger.mjs';
 import { createEscapeStore, recordEscapeAllowProvider } from './lib/core/escape.mjs';
 import { resolveWhitelist, FALLBACK_WHITELIST } from './lib/core/whitelist.mjs';
 import { profileDirectoryRows, profileStatsFromSummaries, applyProfileStats } from './lib/core/profile-directory.mjs';
@@ -82,9 +83,10 @@ function cleanRemovedBackups(home) {
 // 清空守卫记账 + 删本插件数据文件与自装预设目录。另挂钩宿主 agent/disposed
 // （Agent 注册 fiber 卸载时发射）：父会话逻辑结束时按父释放并发/token 记账，
 // 防配额随会话累积驻留。
-function registerTeardown(ctx, dispatch, ledger, guard, home) {
+function registerTeardown(ctx, dispatch, ledger, guard, home, backgroundLedger) {
   ctx.effect(() => dispatch.dispose);
   ctx.effect(() => ledger.clear);
+  ctx.effect(() => backgroundLedger.clear);
   ctx.effect(() => () => {
     guard.cancelAll();
     guard.reset();
@@ -238,7 +240,7 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
 // webServer 可选——无头部署保留 dispatch 工具、只丢设置页。webServer 的激活
 // （listen）是异步的，可能晚于本插件 inject 依赖解析完成，故在等它的 inject
 // 子 scope 内注册（apply 时 ctx.get 会读到 undefined）。
-function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, getAudit, getEvolutionAdvice, setEvolutionAdvice, getEscapeEnabled, setEscapeEnabled, escape, refreshAdvice, summariesFile) {
+function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, backgroundLedger, getAudit, getEvolutionAdvice, setEvolutionAdvice, getEscapeEnabled, setEscapeEnabled, escape, refreshAdvice, summariesFile) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(createHttpRoutes({
       webServer: scope.webServer,
@@ -248,6 +250,7 @@ function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, ca
       syncTool,
       catalog,
       ledger,
+      backgroundLedger,
       getAudit,
       getEvolutionAdvice,
       setEvolutionAdvice,
@@ -300,7 +303,7 @@ function setupEscape(ctx, store, evoLedger, home) {
 
 // `dispatch` 工具装配（defineTool + execute + syncTool）。须在 HTTP inject 之前
 // 构造，使 createHttpRoutes 能拿 dispatch.syncTool 供 /set-enabled 注册/注销。
-function createDispatch(ctx, store, catalog, ledger, guard, evoLedger, getEscapeSet, getEnabled, getEvolutionAdvice) {
+function createDispatch(ctx, store, catalog, ledger, guard, evoLedger, backgroundLedger, getEscapeSet, getEnabled, getEvolutionAdvice) {
   return createDispatchTool({
     register: (tool) => ctx.tools.register(tool),
     store,
@@ -312,6 +315,7 @@ function createDispatch(ctx, store, catalog, ledger, guard, evoLedger, getEscape
     ledger,
     guard,
     evoLedger,
+    backgroundLedger,
     getEscapeSet,
     getEvolutionAdvice,
   });
@@ -333,7 +337,8 @@ export async function apply(ctx) {
   const catalog = createSharedCatalog(ctx);
   const ledger = createFailureLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`), stateFile: join(home, 'subagent-profiles.failed-traces.json') });
   const guard = createDispatchGuard({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
-  const dispatch = createDispatch(ctx, store, catalog, ledger, guard, evoLedger, escapeCtl.getEscapeSet, () => enabled, () => evolutionAdvice);
+  const backgroundLedger = createBackgroundLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
+  const dispatch = createDispatch(ctx, store, catalog, ledger, guard, evoLedger, backgroundLedger, escapeCtl.getEscapeSet, () => enabled, () => evolutionAdvice);
   provideProfileService(ctx, store);
   const adviceWhitelist = await resolveAdviceWhitelist(ctx);
   const adviceEnv = { summariesFile: join(home, 'subagent-evolution', 'summaries.json'), dispatchFile: join(home, 'subagent-evolution', 'dispatch.jsonl'), whitelist: adviceWhitelist, logger: ctx.logger };
@@ -348,6 +353,6 @@ export async function apply(ctx) {
   const disposeProvider = createProfileProvider({ subagents: ctx.subagents, store, getEnabled: () => enabled, logger: ctx.logger, catalog, getEscapeSet: escapeCtl.getEscapeSet, recordEscapeAllowProvider: escapeCtl.recordEscapeAllowProvider });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
   // Client 设置 UI 的 HTTP loopback 路由 —— lib/core/http-routes.mjs。
-  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice, join(home, 'subagent-evolution', 'summaries.json'));
-  registerTeardown(ctx, dispatch, ledger, guard, home);
+  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, backgroundLedger, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice, join(home, 'subagent-evolution', 'summaries.json'));
+  registerTeardown(ctx, dispatch, ledger, guard, home, backgroundLedger);
 }
