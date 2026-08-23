@@ -21,6 +21,8 @@ import { createCatalogCache } from './lib/core/catalog-cache.mjs';
 import { createFailureLedger } from './lib/core/decision-trace.mjs';
 import { createEvolutionLedger } from './lib/core/evolution-ledger.mjs';
 import { createBackgroundLedger } from './lib/core/background-ledger.mjs';
+import { createDraftsStore } from './lib/core/drafts-store.mjs';
+import { sanitizeProfile } from './lib/core/pure.mjs';
 import { createEscapeStore, recordEscapeAllowProvider } from './lib/core/escape.mjs';
 import { resolveWhitelist, FALLBACK_WHITELIST } from './lib/core/whitelist.mjs';
 import { profileDirectoryRows, profileStatsFromSummaries, applyProfileStats } from './lib/core/profile-directory.mjs';
@@ -240,7 +242,7 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
 // webServer 可选——无头部署保留 dispatch 工具、只丢设置页。webServer 的激活
 // （listen）是异步的，可能晚于本插件 inject 依赖解析完成，故在等它的 inject
 // 子 scope 内注册（apply 时 ctx.get 会读到 undefined）。
-function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, backgroundLedger, getAudit, getEvolutionAdvice, setEvolutionAdvice, getEscapeEnabled, setEscapeEnabled, escape, refreshAdvice, summariesFile) {
+function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, backgroundLedger, draftsStore, applyDraft, getAudit, getEvolutionAdvice, setEvolutionAdvice, getEscapeEnabled, setEscapeEnabled, escape, refreshAdvice, summariesFile) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(createHttpRoutes({
       webServer: scope.webServer,
@@ -251,6 +253,8 @@ function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, ca
       catalog,
       ledger,
       backgroundLedger,
+      draftsStore,
+      applyDraft,
       getAudit,
       getEvolutionAdvice,
       setEvolutionAdvice,
@@ -321,6 +325,34 @@ function createDispatch(ctx, store, catalog, ledger, guard, evoLedger, backgroun
   });
 }
 
+// auto-profile S1 落库前的三道闸（Task 43，host 侧可验证部分）：
+// ① 白名单闸（非 system-trust 预设需逃生舱放行）；② 目录/硬上限闸（sanitize + catalog）；
+// ③ 工具交集闸：插件侧无法复算父∩子，故仅校验 toolFilter 形状，真实交集仍由派发时宿主收窄。
+async function applyDraftProfile({ ctx, store, catalog, getEscapeSet, evoLedger, draft }) {
+  if (draft === null || typeof draft !== 'object') throw new Error('draft 不存在');
+  const config = draft.config !== null && typeof draft.config === 'object' ? draft.config : {};
+  const profile = { ...config, name: draft.name, description: draft.description };
+  const { clean, warnings } = sanitizeProfile(profile, { strict: true });
+  if (warnings.length > 0) throw new Error(warnings.map((w) => w.field + '：' + w.reason).join('；'));
+  if (typeof clean.id !== 'string' || clean.id === '') throw new Error('draft 缺少 profile id');
+  if (store.profiles.has(clean.id)) throw new Error('profile ' + clean.id + ' 已存在（请先删除或改名）');
+  const whitelist = new Set(await resolveWhitelist(ctx.get('agentPresets'), getEscapeSet()));
+  if (typeof clean.preset === 'string' && clean.preset !== '' && clean.preset !== 'inherit' && !whitelist.has(clean.preset)) {
+    throw new Error('目标预设 ' + clean.preset + ' 不在 system-trust 白名单（可开启逃生舱并添加该预设后重试）');
+  }
+  const snapshot = await catalog.getSnapshot();
+  if (typeof clean.model === 'string' && clean.model !== '' && !snapshot.models.some((m) => m && m.id === clean.model)) {
+    throw new Error('模型 ' + clean.model + ' 不在当前模型目录');
+  }
+  if (typeof clean.provider === 'string' && clean.provider !== '' && !snapshot.models.some((m) => m && m.provider === clean.provider)) {
+    throw new Error('提供方 ' + clean.provider + ' 不在当前模型目录');
+  }
+  store.profiles.set(clean.id, { ...clean, persisted: true });
+  const persisted = store.persistProfiles();
+  evoLedger.recordGovernanceAudit({ kind: 'draft-apply', profileId: clean.id, source: typeof draft.source === 'string' ? draft.source : 'human' });
+  return { id: clean.id, persisted: persisted.persisted };
+}
+
 export async function apply(ctx) {
   const home = dshHome();
   // 启动清理：上个生命周期留下的 .removed-* 备份残留（S1 改名的副产物）。
@@ -338,6 +370,7 @@ export async function apply(ctx) {
   const ledger = createFailureLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`), stateFile: join(home, 'subagent-profiles.failed-traces.json') });
   const guard = createDispatchGuard({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
   const backgroundLedger = createBackgroundLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
+  const draftsStore = createDraftsStore({ dshHome: home, onGovernanceFailure: () => evoLedger.markGovernanceFailure() });
   const dispatch = createDispatch(ctx, store, catalog, ledger, guard, evoLedger, backgroundLedger, escapeCtl.getEscapeSet, () => enabled, () => evolutionAdvice);
   provideProfileService(ctx, store);
   const adviceWhitelist = await resolveAdviceWhitelist(ctx);
@@ -352,7 +385,8 @@ export async function apply(ctx) {
   registerSystemPromptSections(ctx, store, () => enabled, () => evolutionAdvice, adviceEnv);
   const disposeProvider = createProfileProvider({ subagents: ctx.subagents, store, getEnabled: () => enabled, logger: ctx.logger, catalog, getEscapeSet: escapeCtl.getEscapeSet, recordEscapeAllowProvider: escapeCtl.recordEscapeAllowProvider });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
+  const applyDraft = (draft) => applyDraftProfile({ ctx, store, catalog, getEscapeSet: escapeCtl.getEscapeSet, evoLedger, draft });
   // Client 设置 UI 的 HTTP loopback 路由 —— lib/core/http-routes.mjs。
-  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, backgroundLedger, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice, join(home, 'subagent-evolution', 'summaries.json'));
-  registerTeardown(ctx, dispatch, ledger, guard, home, backgroundLedger);
+  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, backgroundLedger, draftsStore, applyDraft, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice, join(home, 'subagent-evolution', 'summaries.json'));
+  registerTeardown(ctx, dispatch, ledger, guard, home, backgroundLedger, draftsStore);
 }
