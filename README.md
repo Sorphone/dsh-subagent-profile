@@ -142,7 +142,7 @@ dsh-subagent-profile/
 
 Found a bug or have an idea? [Open an issue](https://github.com/muzyLink/dsh-subagent-profile/issues) or submit a pull request — all contributions are welcome.
 
-### CI & release gates
+## CI & release gates
 
 - **CI** (`.gitea/workflows/ci.yml`, Gitea Actions): on push to `main`, runs the **bare** test subset (tests whose import chain never loads `@deepseek-ai`), syntax checks, eslint, `preflight` and `leak-scan`. Tests that do load `@deepseek-ai` (junction tier) run locally only — see `test/README.md` for the split.
 - **Preflight** (`npm run preflight`): zero-dep release gate — reconciles the bundled `presets/` tree against a fresh `$DSH_HOME/.agent-presets` tree, and asserts the READMEs carry no hardcoded version badge.
