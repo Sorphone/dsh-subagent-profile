@@ -189,3 +189,27 @@ test('写入上限：/add 对超限/非法字段返回 400 中文错误', async 
     assert.match(overDepth.json.error, /maxDepth/);
   } finally { iso.restore(); iso.teardown(); }
 });
+
+test('tokenTier 写路径：/add 传合法 tier 落盘，未传保留 existing，非法 400', async () => {
+  const iso = makeIsolatedDshHome();
+  try {
+    const { routes } = await setupApp();
+    const handler = routes[0].handler;
+    const created = await callRoute(handler, 'POST', '/add', { id: 'tiered', name: 't', tokenTier: 'cheap' });
+    assert.equal(created.code, 200);
+    assert.equal(created.json.ok, true);
+    const file = join(iso.dir, 'subagent-profiles.json');
+    const written = JSON.parse(readFileSync(file, 'utf8')).profiles.find((p) => p.id === 'tiered');
+    assert.equal(written.tokenTier, 'cheap', '合法 tokenTier 必须写入落盘文件');
+    // 再编辑同 id 且不带 tokenTier：保留 existing（raw-body 守卫，不回退 balanced）
+    const edited = await callRoute(handler, 'POST', '/add', { id: 'tiered', name: 't2' });
+    assert.equal(edited.code, 200);
+    const rewritten = JSON.parse(readFileSync(file, 'utf8')).profiles.find((p) => p.id === 'tiered');
+    assert.equal(rewritten.tokenTier, 'cheap', '未传 tokenTier 时保留 existing 原值');
+    assert.equal(rewritten.name, 't2');
+    // 非法 tier 直接 400
+    const bad = await callRoute(handler, 'POST', '/add', { id: 'bad', name: 'b', tokenTier: 'free' });
+    assert.equal(bad.code, 400);
+    assert.match(bad.json.error, /tokenTier/);
+  } finally { iso.restore(); iso.teardown(); }
+});

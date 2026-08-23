@@ -1,4 +1,4 @@
-﻿// index.mjs — dsh-subagent-profile 宿主侧正式插件 bundle（只做装配）。
+// index.mjs — dsh-subagent-profile 宿主侧正式插件 bundle（只做装配）。
 // 源自原型动态插件 `code.host` 主体；宿主导入面（registerTool/defineTool/
 // handle）收敛在 lib/core/shims.mjs，装配块按模块拆分驻留 lib/core/（catalog /
 // presets-sync / profiles-store / cost-guard / whitelist / intersection /
@@ -13,6 +13,8 @@ import { dshHome, createProfileStore } from './lib/core/profiles-store.mjs';
 import { createHttpRoutes } from './lib/core/http-routes.mjs';
 import { createProfileProvider } from './lib/core/profile-provider.mjs';
 import { createDispatchTool } from './lib/core/dispatch-tool.mjs';
+import { createCatalogCache } from './lib/core/catalog-cache.mjs';
+import { tierSortKey } from './lib/core/pure.mjs';
 
 export const name = 'dsh-subagent-profile';
 export const inject = ['subagents', 'tools', 'agents'];
@@ -98,6 +100,7 @@ function profileSectionText(store, gate, context) {
   if (!gate(context)) return '';
   const rows = [...store.profiles.values()]
     .filter((p) => p.enabled !== false)
+    .sort((a, b) => tierSortKey(a.tokenTier) - tierSortKey(b.tokenTier))
     .map((p) => {
       const desc = typeof p.description === 'string' && p.description.length > 0 ? `"${p.description}"` : '(无描述)';
       return `- ${p.id}: ${desc}${p.preset !== undefined ? ` (preset: ${p.preset})` : ''}`;
@@ -141,7 +144,7 @@ function registerSystemPromptSections(ctx, store, getEnabled) {
 // (listen) is async and may not be ready when this plugin's inject deps
 // resolve, so register inside an inject sub-scope that waits for it
 // (ctx.get would read undefined at apply time).
-function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool) {
+function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(createHttpRoutes({
       webServer: scope.webServer,
@@ -149,11 +152,21 @@ function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool) {
       getEnabled,
       setEnabled,
       syncTool,
-      getLlm: () => ctx.get('llm'),
-      getAgentPresets: () => ctx.get('agentPresets'),
-      getTools: () => ctx.tools,
+      catalog,
       logger: ctx.logger,
     }), 'dsh-subagent-profile: settings routes');
+  });
+}
+
+// 进程级共享 catalog 快照工厂：一处快照同时喂 /options 三路由与 dispatch 的
+// cost guard（cost guard 经 parent.ctx.get('llm') 传父实例，同一 host llm 下
+// 命中同一条目）。
+function createSharedCatalog(ctx) {
+  return createCatalogCache({
+    getLlm: () => ctx.get('llm'),
+    getAgentPresets: () => ctx.get('agentPresets'),
+    getTools: () => ctx.tools,
+    logger: ctx.logger,
   });
 }
 
@@ -167,6 +180,8 @@ export async function apply(ctx) {
   store.loadProfiles();
   // Self-install the bundled "orchestrator" preset (idempotent, fail-soft).
   syncBundledPresetsToHome(ctx);
+  // 进程级共享 catalog 快照（/options 三路由 + dispatch cost guard 共用）。
+  const catalog = createSharedCatalog(ctx);
   // `dispatch` tool — lib/core/dispatch-tool.mjs: defineTool block (schema +
   // execute), the result-schema consistency lock and the syncTool
   // register/unregister logic.
@@ -179,6 +194,7 @@ export async function apply(ctx) {
     getService: (name) => ctx.get(name),
     logger: ctx.logger,
     subagents: ctx.subagents,
+    catalog,
   });
   // subagent-profiles service over the store's per-apply profiles Map.
   provideProfileService(ctx, store);
@@ -191,10 +207,11 @@ export async function apply(ctx) {
     store,
     getEnabled: () => enabled,
     logger: ctx.logger,
+    catalog,
   });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
   // HTTP loopback routes for the Client settings UI — lib/core/http-routes.mjs.
-  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool);
+  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog);
   // Teardown: unregister the dispatch tool (if still registered).
   ctx.effect(() => dispatch.dispose);
 }

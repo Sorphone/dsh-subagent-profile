@@ -12,7 +12,8 @@
     "release": "node scripts/release.mjs",
     "test": "node --test \"test/**/*.test.mjs\"",
     "test:bare": "node --test test/pure.test.mjs test/input-schema.test.mjs test/catalog-integrity.test.mjs",
-    "preflight": "node scripts/preflight.mjs"
+    "preflight": "node scripts/preflight.mjs",
+    "leak-scan": "node scripts/leak-scan.mjs"
   },
   "exports": {
     ".": "./index.mjs",

@@ -63,3 +63,7 @@ jobs:
       # preflight：preset 树对账（临时 DSH_HOME）+ README 徽章 == version；零依赖
       - name: Preflight
         run: npm run preflight
+
+      # 公开前敏感扫描：全历史私网地址/用户名/凭据模式（发布门禁，零依赖）
+      - name: Leak scan (no private addresses / credentials in history)
+        run: npm run leak-scan

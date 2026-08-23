@@ -2,8 +2,8 @@
 //   * pruneBlocks —— 结果回收默认剪枝纯函数：有 toolResultPruner.pruneContent 时
 //     在 textFrom 之前预剪（返回裁剪结果）；pruner 缺失 / 内置打回 null / 抛错 /
 //     非数组内容时回退为不剪（剪枝是增强、非硬依赖）。
-//   * envelope 参数 —— 工具 schema 暴露 boolean 以作字段契约（预留），execute
-//     不消费它（当前不生效）。
+//   * envelope 参数 —— 工具 schema 暴露 boolean；生效只把信封骨架注入子 persona
+//     （模型侧契约），回收输出仍为纯文本。
 //   * assertResultSchemaConsistency —— 锁定 closed oneOf：三分支共享元数据
 //     (profile/preset/provider/model/reasoningEffort/ignored) 键集一致；构造
 //     不一致（某分支漏 ignored 等）即 throw。
@@ -107,9 +107,9 @@ test('R1 lock: dispatch 工具的 output.schema 通过 assertResultSchemaConsist
   } finally { iso.restore(); iso.teardown(); }
 });
 
-// ---- envelope 参数：schema 暴露 + execute 不消费 ------------------------------
+// ---- envelope 参数：schema 暴露；生效只改 persona（信封骨架），不改回收输出 ---------
 
-test('envelope 参数：schema 中为 boolean（预留），execute 不消费', async () => {
+test('envelope 参数：schema 中为 boolean；生效只改 persona 骨架、回收输出仍为纯文本', async () => {
   const iso = makeIsolatedDshHome();
   try {
     const { ctx, records } = createFakeCtx();
@@ -117,8 +117,8 @@ test('envelope 参数：schema 中为 boolean（预留），execute 不消费', 
     const tool = records.registerToolCalls.find((t) => t.name === 'dispatch');
     assert.ok(tool.parameters.properties.envelope, 'dispatch 参数 schema 必须暴露 envelope');
     assert.equal(tool.parameters.properties.envelope.type, 'boolean');
-    // execute 不消费：带 envelope:true 调用前台路径，输出仍为纯 textFrom 结果
-    // （无任何信封结构）且不抛错 —— 证明该参数当前被忽略。
+    // envelope:true 只把信封骨架注入子 persona（信封回收的模型侧契约），回收
+    // 输出仍为纯 textFrom 结果（无信封结构）且不抛错。
     const parent = { ctx: { get: () => undefined }, options: {} };
     const subagentsStart = async () => ({
       result: { stopReason: 'completed', output: [{ type: 'text', text: 'plain-task-output' }] },
@@ -129,7 +129,7 @@ test('envelope 参数：schema 中为 boolean（预留），execute 不消费', 
     await mod.apply(c2);
     const tool2 = r2.registerToolCalls.find((t) => t.name === 'dispatch');
     const out = await tool2.execute({ prompt: 'task', envelope: true }, { agent: parent, signal: undefined });
-    assert.equal(out.output, 'plain-task-output', 'envelope 当前不生效 → 输出为纯文本');
+    assert.equal(out.output, 'plain-task-output', '回收输出仍为纯文本（骨架进 persona 不进 output）');
   } finally { iso.restore(); iso.teardown(); }
 });
 
