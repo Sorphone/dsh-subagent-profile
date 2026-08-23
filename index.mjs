@@ -184,9 +184,9 @@ export async function apply(ctx) {
   syncBundledPresetsToHome(ctx);
   // 进程级共享 catalog 快照（/options 三路由 + dispatch cost guard 共用）。
   const catalog = createSharedCatalog(ctx);
-  // 进程内失败台账（会话级内存 Map）：dispatch 失败路径记账 + /ledger/failures
-  // 路由读取。同进程 createDispatchTool / createHttpRoutes 共享同一实例。
-  const ledger = createFailureLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
+  // 失败台账：dispatch 失败路径记账 + /ledger/failures 路由读取；stateFile 落盘
+  // JSON（构造加载、record/take 后同步原子写回）。同进程共享同一实例。
+  const ledger = createFailureLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`), stateFile: join(dshHome(), 'subagent-profiles.failed-traces.json') });
   // `dispatch` tool — lib/core/dispatch-tool.mjs: defineTool block (schema +
   // execute), the result-schema consistency lock and the syncTool
   // register/unregister logic.
