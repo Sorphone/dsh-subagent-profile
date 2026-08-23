@@ -22,7 +22,7 @@ import { createFailureLedger } from './lib/core/decision-trace.mjs';
 import { createEvolutionLedger } from './lib/core/evolution-ledger.mjs';
 import { createBackgroundLedger } from './lib/core/background-ledger.mjs';
 import { createDraftsStore } from './lib/core/drafts-store.mjs';
-import { sanitizeProfile } from './lib/core/pure.mjs';
+import { assessDraftProfile } from './lib/core/draft-gates.mjs';
 import { createEscapeStore, recordEscapeAllowProvider } from './lib/core/escape.mjs';
 import { resolveWhitelist, FALLBACK_WHITELIST } from './lib/core/whitelist.mjs';
 import { profileDirectoryRows, profileStatsFromSummaries, applyProfileStats } from './lib/core/profile-directory.mjs';
@@ -184,9 +184,7 @@ function profileSectionText(store, gate, context, summaries) {
 // orchestrator:mode section 文本（逐字保留；与 profiles 同门控）。
 const ORCHESTRATOR_MODE_TEXT = '本机已安装 dsh-subagent-profile 插件的「编排者模式」agent preset：新建会话的预设选择器中可选「编排者模式」。该模式把 Agent 定位为主协调者——拆解任务后按场景用 dispatch（内置 swap-standard=标准编码、researcher=调研检索，可在「子 Agent 方案」设置页自定义）与 subagent/subagent_fork/workflow 委派给子 Agent，再整合结果。preset 文件由插件维护于 ~/.dsh/.agent-presets，安装/升级时自动同步；用户提到「编排者模式 / orchestrator / 主协调模式」时即指本预设，请据此协作。';
 
-// 建议注入候选池：system-trust 白名单（agentPresets 可选；解析失败回退内置
-// 回退名单——fail-loud 检查在建议生成路径进行，不在此处）。刻意不叠加逃生舱放行
-// 集：只读建议不享受逃生舱（逃生舱仅放行「其余三道闸全过」的显式派发，不扩建议池）。
+// 建议注入候选池：system-trust 白名单（解析失败回退内置名单）。不叠加逃生舱放行集。
 async function resolveAdviceWhitelist(ctx) {
   try {
     return new Set(await resolveWhitelist(ctx.get('agentPresets')));
@@ -195,10 +193,8 @@ async function resolveAdviceWhitelist(ctx) {
   }
 }
 
-// 目录 section：渲染可用方案（systemPrompt 的 section text 接受函数，官方
-// tool-subagent 即此用法）。门控注意：`enabled` 必须经 getter 实时读取，
-// 使 /set-enabled 切换立即生效、无需重启。
-function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice, adviceEnv) {
+// 系统提示各 section：门控经 sectionGatePasses；`enabled` 经 getter 实时读取。
+function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice, adviceEnv, guard) {
   const pluginSystemPrompt = ctx.get('systemPrompt');
   if (pluginSystemPrompt === undefined) return;
   const gate = (context) => sectionGatePasses(ctx, getEnabled, context);
@@ -218,10 +214,7 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
     order: 117,
     text: (context) => (gate(context) ? ORCHESTRATOR_MODE_TEXT : ''),
   });
-  // 只读建议段：门控 = orchestrator（sectionGatePasses）+ evolutionAdvice 开关。
-  // 只进父 Agent（复用同一门控）、默认关、只含确定性聚合数字与建议文案，不含派生原文。
-  // 生成异常 try/catch 兜底：fail-loud 检查（非 system 候选）落 warn 日志但绝不
-  // 阻断每次提示装配——损坏/手改的 summaries 不得让 orchestrator 会话无法启动。
+  // 只读建议段：门控 = orchestrator + evolutionAdvice 开关；异常兜底不阻断装配。
   pluginSystemPrompt.section({
     name: 'evolution:advice',
     order: 116.8,
@@ -235,6 +228,18 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
       }
     },
   });
+  // 派发预算余量段：与 profiles 同门控；无父 sessionId 不注入（无法关联具体会话）。
+  pluginSystemPrompt.section({
+    name: 'dispatch:budget',
+    order: 116.7,
+    text: (context) => {
+      if (!gate(context)) return '';
+      const parentSessionId = context?.agent?.session?.header?.id;
+      if (typeof parentSessionId !== 'string' || parentSessionId === '') return '';
+      const b = guard.snapshot(parentSessionId);
+      return `派发预算余量：本会话在途 ${b.concurrency}/${b.maxConcurrent}，累计 token ${b.tokens}/${b.maxParentTokens}，剩余 ${Math.max(0, b.maxParentTokens - b.tokens)} token。`;
+    },
+  });
 }
 
 // Client 设置 UI 的 HTTP loopback 路由（webServer.register ↔ client fetch，纯 JSON）。
@@ -242,7 +247,7 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
 // webServer 可选——无头部署保留 dispatch 工具、只丢设置页。webServer 的激活
 // （listen）是异步的，可能晚于本插件 inject 依赖解析完成，故在等它的 inject
 // 子 scope 内注册（apply 时 ctx.get 会读到 undefined）。
-function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, backgroundLedger, draftsStore, applyDraft, getAudit, getEvolutionAdvice, setEvolutionAdvice, getEscapeEnabled, setEscapeEnabled, escape, refreshAdvice, summariesFile) {
+function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, backgroundLedger, draftsStore, applyDraft, getAudit, getEvolutionAdvice, setEvolutionAdvice, getEscapeEnabled, setEscapeEnabled, escape, refreshAdvice, summariesFile, dispatchFile, adviceWhitelist, previewDraft) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(createHttpRoutes({
       webServer: scope.webServer,
@@ -263,6 +268,9 @@ function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, ca
       escape,
       refreshAdvice,
       summariesFile,
+      dispatchFile,
+      adviceWhitelist,
+      previewDraft,
       logger: ctx.logger,
     }), 'dsh-subagent-profile: settings routes');
   });
@@ -325,27 +333,12 @@ function createDispatch(ctx, store, catalog, ledger, guard, evoLedger, backgroun
   });
 }
 
-// auto-profile S1 落库前的三道闸（Task 43，host 侧可验证部分）：
-// ① 白名单闸（非 system-trust 预设需逃生舱放行）；② 目录/硬上限闸（sanitize + catalog）；
-// ③ 工具交集闸：插件侧无法复算父∩子，故仅校验 toolFilter 形状，真实交集仍由派发时宿主收窄。
+// auto-profile S1 落库：三道闸评估（draft-gates）→ 任一 fail 即 throw → 落库 + 审计。
 async function applyDraftProfile({ ctx, store, catalog, getEscapeSet, evoLedger, draft }) {
-  if (draft === null || typeof draft !== 'object') throw new Error('draft 不存在');
-  const config = draft.config !== null && typeof draft.config === 'object' ? draft.config : {};
-  const profile = { ...config, name: draft.name, description: draft.description };
-  const { clean, warnings } = sanitizeProfile(profile, { strict: true });
-  if (warnings.length > 0) throw new Error(warnings.map((w) => w.field + '：' + w.reason).join('；'));
-  if (typeof clean.id !== 'string' || clean.id === '') throw new Error('draft 缺少 profile id');
-  if (store.profiles.has(clean.id)) throw new Error('profile ' + clean.id + ' 已存在（请先删除或改名）');
-  const whitelist = new Set(await resolveWhitelist(ctx.get('agentPresets'), getEscapeSet()));
-  if (typeof clean.preset === 'string' && clean.preset !== '' && clean.preset !== 'inherit' && !whitelist.has(clean.preset)) {
-    throw new Error('目标预设 ' + clean.preset + ' 不在 system-trust 白名单（可开启逃生舱并添加该预设后重试）');
-  }
-  const snapshot = await catalog.getSnapshot();
-  if (typeof clean.model === 'string' && clean.model !== '' && !snapshot.models.some((m) => m && m.id === clean.model)) {
-    throw new Error('模型 ' + clean.model + ' 不在当前模型目录');
-  }
-  if (typeof clean.provider === 'string' && clean.provider !== '' && !snapshot.models.some((m) => m && m.provider === clean.provider)) {
-    throw new Error('提供方 ' + clean.provider + ' 不在当前模型目录');
+  const { ok, checks, clean } = await assessDraftProfile({ ctx, store, catalog, getEscapeSet, draft });
+  if (!ok) {
+    const failed = checks.find((c) => c.verdict === 'fail');
+    throw new Error(failed !== undefined && typeof failed.reason === 'string' ? failed.reason : 'draft 未通过闸检查');
   }
   store.profiles.set(clean.id, { ...clean, persisted: true });
   const persisted = store.persistProfiles();
@@ -382,11 +375,24 @@ export async function apply(ctx) {
     summariesFile: join(home, 'subagent-evolution', 'summaries.json'),
     logger: ctx.logger,
   });
-  registerSystemPromptSections(ctx, store, () => enabled, () => evolutionAdvice, adviceEnv);
+  registerSystemPromptSections(ctx, store, () => enabled, () => evolutionAdvice, adviceEnv, guard);
   const disposeProvider = createProfileProvider({ subagents: ctx.subagents, store, getEnabled: () => enabled, logger: ctx.logger, catalog, getEscapeSet: escapeCtl.getEscapeSet, recordEscapeAllowProvider: escapeCtl.recordEscapeAllowProvider });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
   const applyDraft = (draft) => applyDraftProfile({ ctx, store, catalog, getEscapeSet: escapeCtl.getEscapeSet, evoLedger, draft });
+  // /draft/preview：只读过闸预览（不落库）。body 为 {config, name, description, source}。
+  const previewDraft = (body) => assessDraftProfile({
+    ctx,
+    store,
+    catalog,
+    getEscapeSet: escapeCtl.getEscapeSet,
+    draft: {
+      config: body !== null && typeof body === 'object' && typeof body.config === 'object' && body.config !== null ? body.config : {},
+      name: body !== null && typeof body === 'object' && typeof body.name === 'string' ? body.name : '',
+      description: body !== null && typeof body === 'object' && typeof body.description === 'string' ? body.description : '',
+      source: body !== null && typeof body === 'object' && typeof body.source === 'string' ? body.source : 'human',
+    },
+  });
   // Client 设置 UI 的 HTTP loopback 路由 —— lib/core/http-routes.mjs。
-  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, backgroundLedger, draftsStore, applyDraft, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice, join(home, 'subagent-evolution', 'summaries.json'));
+  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, backgroundLedger, draftsStore, applyDraft, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice, join(home, 'subagent-evolution', 'summaries.json'), adviceEnv.dispatchFile, adviceEnv.whitelist, previewDraft);
   registerTeardown(ctx, dispatch, ledger, guard, home, backgroundLedger, draftsStore);
 }
