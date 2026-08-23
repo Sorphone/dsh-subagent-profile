@@ -123,7 +123,7 @@ if (!dryRun) {
   console.log(`\n[dry-run] package.json version -> ${target}`)
 }
 
-// ---------- commit / tag / push ----------
+// ---------- 提交 / 打 tag / 推送 ----------
 step('git', ['add', 'package.json'])
 step('git', ['commit', '-m', `chore: release v${target}`])
 step('git', ['tag', '-a', `v${target}`, '-m', `v${target}`])

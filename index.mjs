@@ -28,12 +28,10 @@ import { buildAdviceText, refreshSummaries } from './lib/core/evolution-summary.
 export const name = 'dsh-subagent-profile';
 export const inject = ['subagents', 'tools', 'agents'];
 
-// Self-install the bundled "orchestrator" agent preset into the DSH
-// agent-presets root so the mode appears in the new-session picker without
-// manual copying (mirrors the shipped dsh-liangshen self-install). Idempotent:
-// byte-identical trees are skipped; a bundle change rewrites the preset — the
-// intended upgrade path. Fail-soft: the dispatch tool and settings page keep
-// working even if the write is denied.
+// 自装 bundled 的 "orchestrator" agent 预设到 DSH agent-presets 根，让该模式
+// 无需手动复制就出现在新建会话选择器里（与官方 dsh-liangshen 自安装相同）。
+// 幂等：字节一致的树跳过；bundle 变更重写预设——即预期的升级路径。fail-soft：
+// 写入被拒时 dispatch 工具与设置页照常工作。
 function syncBundledPresetsToHome(ctx) {
   try {
     const presetRoot = join(dshHome(), '.agent-presets');
@@ -102,9 +100,8 @@ function registerTeardown(ctx, dispatch, ledger, guard, home) {
   ctx.effect(() => () => ctx.off('agent/disposed', onAgentDisposed));
 }
 
-// subagent-profiles service over the store's per-apply profiles Map —
-// lets the outside world enumerate and extend the registry without touching
-// internals.
+// subagent-profiles service：包在 store 的 per-apply profiles Map 之上，对外只暴露
+// 枚举/扩展注册表的窄接口，不触碰内部结构。
 function provideProfileService(ctx, store) {
   ctx.provide('subagent-profiles', {
     register(profile) {
@@ -190,10 +187,9 @@ async function resolveAdviceWhitelist(ctx) {
   }
 }
 
-// Directory section rendering the available profiles (systemPrompt's
-// section `text` accepts a function, as the shipped tool-subagent proves).
-// gate: `enabled` must be read live (getter), so /set-enabled toggles
-// apply immediately without a restart.
+// 目录 section：渲染可用方案（systemPrompt 的 section text 接受函数，官方
+// tool-subagent 即此用法）。门控注意：`enabled` 必须经 getter 实时读取，
+// 使 /set-enabled 切换立即生效、无需重启。
 function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice, adviceEnv) {
   const pluginSystemPrompt = ctx.get('systemPrompt');
   if (pluginSystemPrompt === undefined) return;
@@ -203,9 +199,8 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
     order: 116.5,
     text: (context) => profileSectionText(store, gate, context),
   });
-  // Announce the self-installed orchestrator preset so the current agent
-  // knows the mode exists and can point the user to it. Gated the same
-  // way — only a dispatch-capable agent sees it.
+  // 宣告自装的 orchestrator 预设，让当前 agent 知道该模式存在、可引导用户使用。
+  // 门控与 profiles 段相同——只有可派发的 agent 才看得到。
   pluginSystemPrompt.section({
     name: 'orchestrator:mode',
     order: 117,
@@ -230,14 +225,11 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
   });
 }
 
-// HTTP loopback routes for the Client settings UI (webServer.register ↔
-// client fetch; JSON only) — the routes themselves live in
-// lib/core/http-routes.mjs (imported above); this wiring only injects the
-// per-apply deps. webServer is optional — a headless deployment keeps the
-// dispatch tool and drops only the settings page. webServer's activation
-// (listen) is async and may not be ready when this plugin's inject deps
-// resolve, so register inside an inject sub-scope that waits for it
-// (ctx.get would read undefined at apply time).
+// Client 设置 UI 的 HTTP loopback 路由（webServer.register ↔ client fetch，纯 JSON）。
+// 路由本体在 lib/core/http-routes.mjs（上文已 import）；这里只注入 per-apply 依赖。
+// webServer 可选——无头部署保留 dispatch 工具、只丢设置页。webServer 的激活
+// （listen）是异步的，可能晚于本插件 inject 依赖解析完成，故在等它的 inject
+// 子 scope 内注册（apply 时 ctx.get 会读到 undefined）。
 function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, getAudit, getEvolutionAdvice, setEvolutionAdvice, getEscapeEnabled, setEscapeEnabled, escape, refreshAdvice) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(createHttpRoutes({
@@ -326,7 +318,7 @@ export async function apply(ctx) {
   let enabled = store.loadEnabled();
   let evolutionAdvice = store.loadEvolutionAdvice();
   store.loadProfiles();
-  // Self-install the bundled "orchestrator" preset (idempotent, fail-soft).
+  // 自装 bundled 的 orchestrator 预设（幂等、fail-soft）。
   syncBundledPresetsToHome(ctx);
   const catalog = createSharedCatalog(ctx);
   const ledger = createFailureLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`), stateFile: join(home, 'subagent-profiles.failed-traces.json') });
@@ -345,7 +337,7 @@ export async function apply(ctx) {
   registerSystemPromptSections(ctx, store, () => enabled, () => evolutionAdvice, adviceEnv);
   const disposeProvider = createProfileProvider({ subagents: ctx.subagents, store, getEnabled: () => enabled, logger: ctx.logger, catalog, getEscapeSet: escapeCtl.getEscapeSet, recordEscapeAllowProvider: escapeCtl.recordEscapeAllowProvider });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
-  // HTTP loopback routes for the Client settings UI — lib/core/http-routes.mjs.
+  // Client 设置 UI 的 HTTP loopback 路由 —— lib/core/http-routes.mjs。
   registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice);
   registerTeardown(ctx, dispatch, ledger, guard, home);
 }
