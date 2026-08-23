@@ -146,10 +146,11 @@ dsh-subagent-profile/
 
 Found a bug or have an idea? [Open an issue](https://github.com/muzyLink/dsh-subagent-profile/issues) or submit a pull request — all contributions are welcome.
 
-### CI (bare) & preflight
+### CI & release gates
 
-- **Gitea Actions** (`.gitea/workflows/ci.yml`): on `push` / `pull_request` to `v2-midterm` / `main`, runs the **bare-CI** subset — the tests that never load `@deepseek-ai` (`npm run test:bare`: pure / input-schema / catalog-integrity), `node --check` syntax checks, eslint (installed in isolation, since the bare environment cannot install the `@deepseek-ai` devDependencies), and `npm run preflight`. **Enabling Gitea Actions requires installing an Act runner on the server** (register it with the `ubuntu-latest` label); the workflow takes effect automatically once the runner is ready. Junction-dependent tests (characterization / facade / gating / persist / recycle / cost-guard / continuable-guard) run locally only — see `test/README.md` for the two-tier split and its rationale.
-- **Preflight** (`npm run preflight`): zero-dependency self-check — ① reconciles the bundled `presets/` tree against a fresh `$DSH_HOME/.agent-presets` derived tree (byte-identical set, both directions; never touches the real `~/.dsh`), ② asserts the READMEs contain no hardcoded version badge (the npm badge follows the published version automatically). Non-zero exit means drift — fix and re-run before release.
+- **CI** (`.gitea/workflows/ci.yml`, Gitea Actions): on push to `main`, runs the **bare** test subset (tests whose import chain never loads `@deepseek-ai`), syntax checks, eslint, `preflight` and `leak-scan`. Tests that do load `@deepseek-ai` (junction tier) run locally only — see `test/README.md` for the split.
+- **Preflight** (`npm run preflight`): zero-dep release gate — reconciles the bundled `presets/` tree against a fresh `$DSH_HOME/.agent-presets` tree, and asserts the READMEs carry no hardcoded version badge.
+- **Leak scan** (`npm run leak-scan`): blocks release when history or worktree contains private addresses, credentials, or non-noreply commit identities.
 
 If this plugin has been useful to you, please give it a ⭐ on GitHub — it helps others find it.
 
