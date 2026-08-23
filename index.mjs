@@ -177,7 +177,7 @@ function profileSectionText(store, gate, context, summaries) {
     if (p.successRate !== undefined) meta.push(`成功率 ${p.successRate}${p.n !== undefined ? ` (N=${p.n})` : ''}`);
     return `- ${p.id}: ${desc}${meta.length > 0 ? ` (${meta.join(' · ')})` : ''}`;
   });
-  const note = '- 选择方案时先匹配任务复杂度与方案描述的能力边界，成本只在能力都胜任的方案之间比较——复杂任务不得为省 token 改用能力不足的便宜方案。\n- 别把 1-2 步即可自查/可搜完的小事委派出去 —— 几分钟内能自查完的直接做。';
+  const note = '- 选择方案时先匹配任务复杂度与方案描述的能力边界，成本只在能力都胜任的方案之间比较——复杂任务不得为省 token 改用能力不足的便宜方案。\n- 别把 1-2 步即可自查/可搜完的小事委派出去 —— 几分钟内能自查完的直接做。\n- 优先使用已保存的 profile；只有少数字段需要临时覆盖时才传 per-call 参数。查资料/汇总/读文件等轻任务优先 cheap 或 flash。';
   return `Available dispatch profiles (dispatch.profile):\n${lines.join('\n')}\n${note}`;
 }
 
