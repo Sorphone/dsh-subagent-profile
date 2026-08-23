@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import {
   bundledPresetsRoot,
   filesUnder,
+  isSyncMetadata,
   syncBundledPresets,
 } from '../lib/core/presets-sync.mjs';
 
@@ -60,6 +61,8 @@ function collectProblems(sourceRoot, targetRoot) {
     if (existsSync(targetDir)) {
       for (const file of filesUnder(targetDir)) {
         const rel = relative(targetDir, file);
+        // 同步元数据（sidecar / 用户改动档案）是插件本地产物，非 preset 漂移。
+        if (isSyncMetadata(rel)) continue;
         if (!existsSync(join(sourceDir, rel))) {
           problems.push(`多余 ${id}/${rel}`);
         }

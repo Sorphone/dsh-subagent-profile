@@ -35,6 +35,7 @@ function syncBundledPresetsToHome(ctx) {
     const sync = syncBundledPresets(presetRoot);
     for (const { id, error } of sync.failed) ctx.logger.warn(`[dsh-subagent-profile] preset ${id} sync failed: ${error}`);
     if (sync.synced.length > 0) ctx.logger.info(`[dsh-subagent-profile] presets synced into ${presetRoot}: ${sync.synced.join(', ')}`);
+    if (sync.userModified.length > 0) ctx.logger.warn(`[dsh-subagent-profile] presets left untouched (user-modified): ${sync.userModified.join(', ')}`);
   } catch (error) {
     ctx.logger.warn('[dsh-subagent-profile] preset sync failed:', error instanceof Error ? error.message : String(error));
   }
