@@ -169,7 +169,7 @@ test('settings /options/summary 响应含 audit 字段（ok 默认态）', async
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('装配治理写失败：/add 持久化失败 → audit degraded + lostGovernance +1', async () => {
+test('装配治理写失败：/add 持久化失败 → audit degraded + P0 提醒 mint（lostGovernance 计两次审计写失败）', async () => {
   // DSH_HOME 指向 blocker 文件下，subagent-profiles.json 写失败 → persistProfiles false。
   const tmpRoot = mkdtempSync(join(tmpdir(), 'dsh-audit-meta-'));
   const blockerFile = join(tmpRoot, 'blocker');
@@ -182,8 +182,13 @@ test('装配治理写失败：/add 持久化失败 → audit degraded + lostGove
     assert.equal(add.json.persisted, false, 'profiles 写失败上报 persisted:false');
     const summary = await callRoute(handler, 'GET', '/options/summary');
     assert.equal(summary.json.audit.health, 'degraded', '治理写失败 health 置 degraded');
-    assert.equal(summary.json.audit.lostGovernance, 1);
+    // Task 42 接线后：profile 持久化失败（+1）+ 降级提醒的审计写失败（+1，degraded 下
+    // 审计通道同样不可写）→ 两次独立审计丢失，不再恒等于 1。
+    assert.equal(summary.json.audit.lostGovernance, 2);
     assert.equal(summary.json.audit.lostTelemetry, 0);
+    // 降级 P0 提醒经内存 store 可见（/reminders 与 [6] 审计同源）。
+    const reminders = await callRoute(handler, 'GET', '/reminders');
+    assert.ok(reminders.json.reminders.some((r) => r.severity === 'P0' && r.kind === 'audit-degraded' && r.unread === true), 'degraded 必须 mint P0 未读提醒');
   } finally {
     if (prev === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = prev;
