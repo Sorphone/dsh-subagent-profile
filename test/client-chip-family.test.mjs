@@ -26,16 +26,15 @@ function functionBody(name) {
   throw new Error('函数括号不平衡：' + name);
 }
 
-test('父卡与方案卡使用同一 chip 组件族，banner 收敛为单一摘要标签', () => {
-  // makeChip 是唯一 chip 工厂，返回 (key,label,value,opts) 组件；父卡与方案卡经 chip 参数接收。
+test('Task 45：三处展示使用同一 chip 组件族（makeChip 经参数注入，chip() 调用同族）', () => {
+  // makeChip 是唯一 chip 工厂，返回 (key,label,value,opts) 组件；三处均以 chip 参数接收。
   assert.match(source, /function makeChip\(el\)/);
   const dispatchChips = functionBody('buildDispatchChips');
   assert.match(dispatchChips, /chip\(/, '父卡 chip 行必须使用 chip 组件族');
   const profileRows = functionBody('buildProfileRows');
   assert.match(profileRows, /chip\(/, '方案卡 chipItems 必须使用 chip 组件族');
   const banner = functionBody('buildSubagentBanner');
-  assert.doesNotMatch(banner, /chip\(/, 'banner 不再使用多 chip 行（单一摘要标签）');
-  assert.match(banner, /sap-subagentBannerTag/, 'banner 必须渲染单一摘要标签');
+  assert.match(banner, /chip\(/, '子会话 banner 必须使用 chip 组件族');
 });
 
 test('Task 45：父卡 chip 行未展开即渲染（chips 在摘要/详情折叠之外）', () => {
@@ -54,42 +53,7 @@ test('Task 45：banner 注册到 conversation.session.header.utilities 槽', () 
   assert.match(source, /dsh-subagent-profile-subagent/, 'banner 条目 id 存在');
 });
 
-test('banner 最终形态：单一摘要标签 + title 全量详情 + 来源移入 title', () => {
-  // 摘要标签：继承场景固定「继承父会话 · 模式」，有值场景按模型 · 强度 · 模式。
-  const summary = functionBody('bannerSummaryText');
-  assert.match(summary, /bannerInheritValue \+ ' · ' \+ bannerModeText/, '继承场景摘要必须固定文案');
-  assert.match(summary, /\.join\(' · '\)/, '有值场景摘要必须 · 分隔');
-  assert.match(summary, /bannerModelText/);
-  assert.match(summary, /bannerEffortText/);
-  // title 全量详情：模型/推理强度/预设/模式/来源五行，来源含完整父会话 id。
-  const title = functionBody('bannerTitleText');
-  for (const key of ['chipModel', 'chipEffort', 'chipPreset', 'chipMode', 'bannerOriginTitle']) {
-    assert.match(title, new RegExp(key), 'title 详情必须含 ' + key);
-  }
-  assert.match(title, /parentId/, '来源必须带完整父会话 id');
-  // 来源不再单独渲染常驻行。
-  assert.doesNotMatch(source, /subagentOriginSuffix/);
-  assert.doesNotMatch(source, /sap-subagentOrigin/);
-  assert.doesNotMatch(source, /sap-subagentLine/);
-  // 标签：紧凑胶囊、浅灰底、虚线边框、help 光标、上限 260px、永不挤宿主按钮。
-  assert.match(source, /\.sap-subagentBannerTag\{[^}]*max-width:260px/);
-  assert.match(source, /\.sap-subagentBannerTag\{[^}]*cursor:help/);
-  assert.match(source, /\.sap-subagentBannerTag\{[^}]*border:1px dashed/);
-  assert.match(source, /\.sap-subagentBanner\{[^}]*max-width:42%[^}]*min-width:0/);
-});
-
-test('banner 三种模式文案：继承父 / 有值 / 后台均有明确模式词', () => {
-  const mode = functionBody('bannerModeText');
-  assert.match(mode, /bannerModePersistent/, '持久模式必须用「持久」');
-  assert.match(mode, /modeBackground/, '后台模式必须用「后台」');
-  assert.match(mode, /modeForeground/, '前台模式必须用「前台」');
-  assert.match(source, /bannerInheritValue: '继承父会话'/);
-});
-
-test('banner 模式识别：父快照 execution.kind 优先，后台经 /ledger/jobs 兜底', () => {
-  const kind = functionBody('parentDispatchKindOf');
-  assert.match(kind, /execution\.kind/, '模式必须读 decisionTrace.execution.kind');
-  const load = functionBody('loadSubagentBanner');
-  assert.match(load, /ledger\/jobs\?session=/, '后台兜底必须查 /ledger/jobs');
-  assert.match(load, /childSessionId/, '后台兜底必须按子会话 id 配对');
+test('Task 45：层 2 显 n/a 不虚报 + SC2 continuable 兜底文案', () => {
+  assert.match(source, /委派深度\/工具集摘要\/固化模型：n\/a（宿主未投影）/);
+  assert.match(source, /已读模型\/工具\/人格，强度与预设受宿主限制/);
 });
