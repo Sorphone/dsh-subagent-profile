@@ -70,9 +70,9 @@ function cleanRemovedBackups(home) {
   }
 }
 
-// parent_adopted 装配（E-1）：tracker 工厂 + 根 ctx 订阅 session/event（按 session.id
+// parent_adopted 装配：tracker 工厂 + 根 ctx 订阅 session/event（按 session.id
 // 过滤），卸载退订并清理定时器。onDecision 经 getRefreshAdvice 延迟读取（先判定后聚合
-// 时为空操作）；onDecided 把「明确未采纳」逐条 mint P2 提醒（Task 42）。
+// 时为空操作）；onDecided 把「明确未采纳」逐条 mint P2 提醒。
 function setupAdoptionTracker(ctx, home, getRefreshAdvice, getReminderStore) {
   const adoptionTracker = createAdoptionTracker({
     stateFile: join(home, 'subagent-evolution', 'adopted-state.json'),
@@ -80,7 +80,7 @@ function setupAdoptionTracker(ctx, home, getRefreshAdvice, getReminderStore) {
     onDecision: () => { try { getRefreshAdvice()(); } catch { /* 聚合重算失败不影响判定（fail-soft） */ } },
     onDecided: (rec) => {
       try {
-        getReminderStore()?.record({ severity: 'P2', kind: 'adoption-false', title: '派发结果未被采纳', detail: `方案键 ${rec.ledgerKey}（${rec.mode} ${rec.id}）在判定窗口内未被父会话采纳`, sessionId: rec.parentSessionId });
+        getReminderStore()?.record({ severity: 'P2', kind: 'adoption-false', title: '派发结果未被采纳', detail: '该次派发的结果在判定窗口内未被父会话采纳', sessionId: rec.parentSessionId });
       } catch { /* 提醒 mint 失败不影响判定 */ }
     },
   });
@@ -192,7 +192,7 @@ function profileSectionText(store, gate, context, summaries) {
 // orchestrator:mode section 文本（逐字保留；与 profiles 同门控）。
 const ORCHESTRATOR_MODE_TEXT = '本机已安装 dsh-subagent-profile 插件的「编排者模式」agent preset：新建会话的预设选择器中可选「编排者模式」。该模式把 Agent 定位为主协调者——拆解任务后按场景用 dispatch（内置 swap-standard=标准编码、researcher=调研检索，可在「子 Agent 方案」设置页自定义）与 subagent/subagent_fork/workflow 委派给子 Agent，再整合结果。preset 文件由插件维护于 ~/.dsh/.agent-presets，安装/升级时自动同步；用户提到「编排者模式 / orchestrator / 主协调模式」时即指本预设，请据此协作。';
 
-// 建议注入候选池：system-trust 白名单（解析失败回退内置名单）。不叠加逃生舱放行集。
+// 建议注入候选池：受信任预设白名单（解析失败回退内置名单）。不叠加逃生舱放行集。
 async function resolveAdviceWhitelist(ctx) {
   try {
     return new Set(await resolveWhitelist(ctx.get('agentPresets')));
@@ -324,7 +324,7 @@ function setupEscape(ctx, store, evoLedger, home, getReminderStore) {
     setEscapeEnabled: (next) => { state.escapeEnabled = next; },
     recordEscapeAllowProvider: (parent, preset) => {
       recordEscapeAllowProvider(evoLedger, parent, preset);
-      mintReminder(getReminderStore(), { severity: 'P1', kind: 'escape-allow', title: '逃生舱放行', detail: '非 system-trust 预设 "' + preset + '" 经逃生舱放行（其余三道闸全量生效）', sessionId: parent?.session?.header?.id });
+      mintReminder(getReminderStore(), { severity: 'P1', kind: 'escape-allow', title: '逃生舱放行', detail: '非官方预设 "' + preset + '" 经逃生舱放行（其余安全检查仍全量生效）', sessionId: parent?.session?.header?.id });
     },
   };
 }
@@ -350,12 +350,12 @@ function createDispatch(ctx, store, catalog, ledger, guard, evoLedger, backgroun
   });
 }
 
-// auto-profile S1 落库：三道闸评估（draft-gates）→ 任一 fail 即 throw → 落库 + 审计。
+// auto-profile S1 落库：三道安全检查评估（draft-gates）→ 任一 fail 即 throw → 落库 + 审计。
 async function applyDraftProfile({ ctx, store, catalog, getEscapeSet, evoLedger, draft }) {
   const { ok, checks, clean } = await assessDraftProfile({ ctx, store, catalog, getEscapeSet, draft });
   if (!ok) {
     const failed = checks.find((c) => c.verdict === 'fail');
-    throw new Error(failed !== undefined && typeof failed.reason === 'string' ? failed.reason : 'draft 未通过闸检查');
+    throw new Error(failed !== undefined && typeof failed.reason === 'string' ? failed.reason : 'draft 未通过安全检查');
   }
   store.profiles.set(clean.id, { ...clean, persisted: true });
   const persisted = store.persistProfiles();
@@ -401,7 +401,7 @@ export async function apply(ctx) {
   const disposeProvider = createProfileProvider({ subagents: ctx.subagents, store, getEnabled: () => enabled, logger: ctx.logger, catalog, getEscapeSet: escapeCtl.getEscapeSet, recordEscapeAllowProvider: escapeCtl.recordEscapeAllowProvider });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
   const applyDraft = (draft) => applyDraftProfile({ ctx, store, catalog, getEscapeSet: escapeCtl.getEscapeSet, evoLedger, draft });
-  // /draft/preview：只读过闸预览（不落库）。body 为 {config, name, description, source}。
+  // /draft/preview：只读安全检查预览（不落库）。body 为 {config, name, description, source}。
   const previewDraft = (body) => assessDraftProfile({
     ctx,
     store,

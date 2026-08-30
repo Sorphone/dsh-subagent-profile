@@ -65,3 +65,9 @@ test('Task 45（批次 6.5/7 规格 2.5）：来源并入标题后缀 + 层 2 �
   // CSS 加固：banner 不侵占宿主空间（宿主按钮优先级恒最高）。
   assert.match(source, /\.sap-subagentBanner\{[^}]*max-width:42%[^}]*min-width:0[^}]*overflow:hidden/);
 });
+
+test('子会话 banner：来源小字与 chips 同行、chips 单行不折 2×2', () => {
+  assert.match(source, /className: 'sap-subagentLine'/);
+  assert.match(source, /\.sap-subagentBanner \.sap-chips\{flex-wrap:nowrap/);
+  assert.match(source, /\.sap-subagentOrigin\{[^}]*flex:none/);
+});

@@ -6,15 +6,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createReminderStore } from '../lib/core/reminder-store.mjs';
+import { createReminderStore, reminderDetailText } from '../lib/core/reminder-store.mjs';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
 import { makeRouteHarness, callRoute } from './harness/routes.mjs';
 
 const mod = await import('../index.mjs');
-
-function tmpHome(prefix) {
-  return { prefix };
-}
 
 test('reminder store：record 归一（severity 回退 P2、空 sessionId 归一 null）+ P0 三要件字段', () => {
   const audits = [];
@@ -108,4 +104,23 @@ test('路由：GET /reminders + POST /reminders/ack + POST /reminders/action（�
     assert.match(auditText, /"kind":"reminder-action"[^}]*"action":"dismiss"/);
     assert.match(auditText, /"kind":"reminder-acked"/);
   } finally { iso.restore(); iso.teardown(); }
+});
+
+test('reminderDetailText：派发未被采纳提醒人话化（内部词零泄露）', () => {
+  assert.equal(
+    reminderDetailText('(inline)', 'foreground', 'c1'),
+    '派发方案 内联（前台 c1）在判定窗口内未被父会话采纳',
+    '内联键 + 前台模式必须人话化'
+  );
+  assert.equal(
+    reminderDetailText('preset:researcher|model:deepseek-v4-pro', 'background', 'job-1'),
+    '派发方案 预设 researcher · 模型 deepseek-v4-pro（后台 job-1）在判定窗口内未被父会话采纳',
+    '配置重建键 + 后台模式必须人话化'
+  );
+  assert.equal(
+    reminderDetailText('(inline)', 'continuable', 's9'),
+    '派发方案 内联（持续 s9）在判定窗口内未被父会话采纳',
+    'continuable 模式映射「持续」'
+  );
+  assert.ok(!reminderDetailText('(inline)', 'foreground', 'c1').includes('方案键'), '不得出现内部词「方案键」');
 });

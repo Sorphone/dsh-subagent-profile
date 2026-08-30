@@ -126,7 +126,7 @@ dsh-subagent-profile/
 │   └── leak-scan.mjs             # public-release gate: scans all history + worktree for sensitive patterns
 ├── docs/
 │   └── screenshots/              # README screenshots
-├── test/                         # host-side tests (node:test, zero extra deps; 407 cases — 27 bare in CI, 380 junction local)
+├── test/                         # host-side tests (node:test, zero extra deps; 422 cases — 27 bare in CI, 395 junction local)
 │   ├── README.md / README.zh.md  # test directory guide (EN/ZH) — two-tier split explained
 │   ├── harness/ctx.mjs           # fake Cordis ctx + ~/.dsh isolation
 │   ├── pure / input-schema / catalog-integrity.test.mjs   # bare tier (import-free, runs in bare CI)

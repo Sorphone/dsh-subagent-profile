@@ -126,7 +126,7 @@ dsh-subagent-profile/
 │   └── leak-scan.mjs             # 公开发布门禁：全历史 + 工作区敏感模式扫描
 ├── docs/
 │   └── screenshots/              # README 截图
-├── test/                         # 宿主侧自动化测试（node:test，零新增依赖；407 用例 = 27 bare 档 CI 跑 + 380 junction 档本机跑）
+├── test/                         # 宿主侧自动化测试（node:test，零新增依赖；422 用例 = 27 bare 档 CI 跑 + 395 junction 档本机跑）
 │   ├── README.md / README.zh.md  # 测试目录说明（中英双语）——两档测试划分
 │   ├── harness/ctx.mjs           # 假宿主环境（fake ctx + ~/.dsh 隔离）
 │   ├── pure / input-schema / catalog-integrity.test.mjs   # bare 档（import-free，bare CI 可跑）

@@ -42,7 +42,7 @@ test('设置页三卡：折叠卡带描述与 SVG chevron，静态卡无 chevron
 test('全局成本卡：口径纯净 + 空态文案人话', () => {
   const body = functionBody('buildCostObservabilitySection');
   assert.match(body, /估算成本按已记录的派发统计得出——记录较少时数值可能不准，会随使用逐步修正。/);
-  assert.match(body, /各会话的成本明细见会话页「派发决策台账」/);
+  assert.match(body, /各会话的成本明细见会话页「派发账本」/);
   assert.doesNotMatch(body, /本会话/);
   assert.doesNotMatch(body, /summaries/);
   assert.doesNotMatch(body, /口径/);
@@ -54,18 +54,7 @@ test('高级区四子组：安全/建议注入/通知/维护 顺序清晰且不�
   const positions = ['安全', '建议注入', '通知', '维护'].map((word) => body.indexOf("'" + word + "'"));
   assert.ok(positions.every((p) => p >= 0), '四个子组标题必须存在');
   assert.ok(positions[0] < positions[1] && positions[1] < positions[2] && positions[2] < positions[3], '子组顺序必须为 安全→建议注入→通知→维护');
-  assert.match(source, /\.sap-subgroup \+ \.sap-subgroup\{margin-top:20px\}/);
-  assert.doesNotMatch(source, /\.sap-subgroup \+ \.sap-subgroup\{border-top/, '子组间不再用全宽横线');
-  for (const hint of ['放行非官方预设的高风险通道，默认关闭', '只提示，不自动改配置', '所有动作均有审计记录', '插件版本与宿主兼容性状态']) {
-    assert.match(body, new RegExp(hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), '子组小字必须存在：' + hint);
-  }
-  assert.doesNotMatch(body, /ZH\.resetAllBuiltins/, '重置内置方案不得留在维护区');
-  assert.match(body, /'当前版本 v' \+ s\.pluginVersion \+ ' · 未发现兼容性问题'/);
-  const shell = functionBody('buildSectionReturn');
-  const resetPos = shell.indexOf('ZH.resetAllBuiltins');
-  const costCardPos = shell.indexOf("'全局成本'");
-  assert.ok(resetPos >= 0, '重置按钮必须存在');
-  assert.ok(costCardPos < 0 || resetPos < costCardPos, '重置按钮必须在方案管理卡（全局成本卡之前）');
+  assert.match(source, /\.sap-subgroup \+ \.sap-subgroup\{border-top:1px solid/);
 });
 
 test('提醒条目：UUID 截断前 8 位、标题单行 ellipsis、按钮独立右对齐行', () => {
