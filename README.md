@@ -2,7 +2,7 @@
 
 <!-- Hero -->
 <div align="center">
-  <b style="font-size: 1.15em;">Subagent dispatch, profiled — the right agent for the right task (preset / model / reasoning effort)</b><br /><br />
+  <b style="font-size: 1.15em;">子 Agent 派发插件 —— 派发可控 · 成本有数 · 决策留痕</b><br /><br />
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" />
   <img alt="npm" src="https://img.shields.io/npm/v/dsh-subagent-profile.svg" />
   <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.0--rc.6%20~%200.2.0-blue.svg" />
@@ -12,7 +12,7 @@
 
 For [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH).
 
-> *Thinking, Fast and Slow*: System 1 is fast and cheap, System 2 is slow and careful. The built-in `subagent` gives every subtask the same brain as its parent — no way to tell them apart. `dsh-subagent-profile` lets you pick per subtask: research with a fast brain, deep work with a careful one, saved as named **profiles**.
+> Dispatch subagents in DeepSeek Harness: pick model, reasoning effort, and tool scope per task; save common combos as named profiles for reuse. Built-in safety checks, cost estimation with savings analysis, and a full decision ledger.
 
 ## Why this plugin
 
@@ -21,12 +21,10 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH).
 | Per-subtask model / preset | ❌ same brain for every subtask | ✅ pick per subtask |
 | Reusable named setups | ❌ | ✅ profiles |
 | Tool-scope narrowing | ❌ | ✅ whitelist ∩ parent, `run_code` always removed |
-| Cost guardrails | ❌ | ✅ model / effort / tokens / depth capped |
-| GUI management | ❌ | ✅ settings page |
-
-- **Per-subtask control over the child's brain.** `dispatch` sets, per subtask: which preset (composition), which model, which reasoning effort, which tools, and the token cap. A research subtask and a coding subtask can run with completely different setups — something the plain `subagent` tool can't do (it only inherits the parent).
-- **Named, reusable profiles.** A profile is one bundle of preset + model + reasoning effort + tool scope + persona. Save "research" as `researcher` (reasoning off, search-only tools) and dispatch with `dispatch(profile="researcher")`; two built-ins ship (`swap-standard` = full standard coding toolkit, `researcher`), and you can add/edit/remove your own in the settings page.
-- **Fully observable.** Every result reports the effective profile / preset / model / reasoning effort; logs are tagged `[dsh-subagent-profile]`.
+| Safety checks | ❌ | ✅ whitelist / cost / intersection / approval / budget, all recorded |
+| Cost visibility | ❌ | ✅ per-dispatch estimate + savings comparison |
+| Decision ledger | ❌ | ✅ full trace: request vs. effective, gates, execution, settlement |
+| GUI management | ❌ | ✅ settings page + per-session ledger tab |
 
 ## Installation
 
@@ -35,7 +33,7 @@ dsh plugin --profile web add dsh-subagent-profile        # published package
 dsh plugin --profile web add ./dsh-subagent-profile      # from a local checkout
 ```
 
-Restart `dsh web`. This is a standard **bundle plugin**: it provides the `dispatch` tool, the profile provider, the `subagent-profiles` service, the `/subagent-profiles/*` loopback management routes, the settings page (「子 Agent 方案」), and the `dispatch` tool-call card in the web GUI. On startup it also **self-installs an agent preset** — **`orchestrator`** (「编排者模式」) — pick it in the new-session preset picker. The sync is idempotent and re-runs on every startup, so upgrading the plugin updates the preset.
+Restart `dsh web`. This is a standard **bundle plugin**: it provides the `dispatch` tool, the profile provider, the `subagent-profiles` service, the `/subagent-profiles/*` loopback management routes, the settings page (「子 Agent 方案」), the per-session ledger tab, and the `dispatch` tool-call card in the web GUI. On startup it also **self-installs an agent preset** — **`orchestrator`** (「编排者模式」) — pick it in the new-session preset picker. The sync is idempotent and re-runs on every startup, so upgrading the plugin updates the preset.
 
 ## Usage
 
@@ -66,28 +64,48 @@ dispatch(
 
 ![dispatch tool-call card — every result shows what actually ran](docs/screenshots/dispatch-card.png)
 
+### 3. Review in the decision ledger
+
+Every session has a ledger tab that records each dispatch decision: what the parent saw and requested, what actually took effect (with ignored-request highlights), which tools were removed and why, how execution went (including stalls and parent interventions), and what it cost. Safety-check failures are surfaced with fix directions.
+
 ## Safety model
 
 Delegation never lets a subagent gain more power than you already have — this is the default, with no configuration:
 
 - **Tools only shrink.** A child's tool set is the intersection of the profile's tools and the parent's tools, and `run_code` is always removed.
-- **Approval is always "never".** A child cannot widen its own permissions; operations that need approval are rejected automatically.
+- **Approval is never bypassed.** Delegation does not waive the host's approval requirements; operations that need approval are rejected automatically.
 - **Cost is capped.** Model, reasoning effort, tokens, and recursion depth are all bounded; out-of-range values fail loudly instead of silently downgrading.
+- **An escape hatch, explicitly.** Non-official presets can be allowed per-preset (default off, each allowance audited).
+
+## Observability & notifications
+
+- **Live status.** Background dispatches show live phase badges (start / gate / create / running / settled), driven by host job events with polling fallback.
+- **Reminder center.** Urgent events (escape-hatch allowances, audit degradation, budget anomalies) raise a persistent badge; the notification center keeps every reminder with full context — parent session, child session, task summary, and outcome — plus one-click jumps to the related sessions. Normal orchestration events (e.g. a parent not adopting a child's result) are recorded in the audit ledger without interrupting you.
+- **Dispatch suggestions.** Based on historical dispatch statistics, the plugin can inject read-only optimization hints for the parent agent (e.g. "this profile has a low recent success rate, consider switching") — hints only, nothing is changed automatically.
+- **Subagent header badge.** Child sessions show a compact summary badge (e.g. `继承父会话 · 前台` — "inherits the parent session, foreground"); hover for the full detail (model / effort / preset / mode / origin).
 
 ## Data
 
 - `~/.dsh/subagent-profiles.json` — the profile registry (edited from the settings page).
 - `~/.dsh/subagent-profiles.state.json` — the plugin's enable/disable switch (default enabled).
 - `~/.dsh/subagent-profiles.failed-traces.json` — the failure ledger (dispatch failure traces).
+- `~/.dsh/subagent-evolution/` — the decision ledger and statistics:
+  - `dispatch.jsonl` — per-dispatch decision records (no prompt content).
+  - `summaries.json` — aggregated per-profile statistics (versioned, rebuilt on corruption).
+  - `adopted-state.json` — adoption verdict state for child results (cross-restart).
+  - `reminders.json` — reminder store (one reminder = one audit record).
 - `~/.dsh/.agent-presets/orchestrator/` — the self-installed `orchestrator` agent preset (synced from the bundled `presets/orchestrator/` on every startup).
 
-`DSH_HOME` is respected and defaults to `~/.dsh`. Uninstalling the plugin removes the three data files above and the self-installed `orchestrator` preset directory (other plugins' presets are left untouched); re-installing or re-launching re-syncs the preset and regenerates the data files.
+`DSH_HOME` is respected and defaults to `~/.dsh`. Uninstalling the plugin removes the data files above and the self-installed `orchestrator` preset directory (other plugins' presets are left untouched); re-installing or re-launching re-syncs the preset and regenerates the data files.
 
 ## Known limitations
 
-- **Background** one-shot dispatch requires `@deepseek-ai/dsh-jobs` and `@deepseek-ai/dsh-tool-jobs` to be loaded; otherwise it fails with "dispatch: 后台派发不可用：缺少 jobs 服务".
-- **Continuable** mode goes through the DSH standard composition path, so the `preset` swap and `reasoningEffort` are ignored (the child inherits the parent preset at the default reasoning effort).
-- **Continuable** tool gate is a plugin-side mitigation: the child's `allow` is pre-computed as a closed set — parent tool set − `run_code` − `deny`, then intersected with `allow`. **Assumption:** continuable inherits the parent preset, so the child's tool set ≈ the parent's. **Failure condition:** any host behavior change that makes the child's tool set differ from the parent's (not only preset swap — e.g. a future preset swap, composing a different tool set) means the parent set can contain tools the child does not have, so `tools.restrict` throws "unknown tool" and this mitigation automatically degrades to fail-loud (conservatively safe); it must then be replaced with a true parent ∩ child intersection once the upstream provides a provider guard seam.
+- **Background dispatch** requires `@deepseek-ai/dsh-jobs` and `@deepseek-ai/dsh-tool-jobs` to be loaded; otherwise it fails with "dispatch: 后台派发不可用：缺少 jobs 服务".
+- **Continuable mode** goes through the DSH standard composition path, so the `preset` swap and `reasoningEffort` are ignored (the child inherits the parent preset at the default reasoning effort).
+- **Who decides the child's final tool set depends on the mode**:
+  - Continuable: narrowed by this plugin up front — the child's `allow` = (parent tool set − `run_code` − `deny`) ∩ `allow`. Assumption: continuable inherits the parent preset, so the child's tool set ≈ the parent's; if dsh's behavior changes so the two differ (e.g. a future preset swap composing a different tool set), tool narrowing fails with a hard error (conservatively safe — never silently granting more), to be replaced with a true parent ∩ child intersection once dsh provides an official seam.
+  - One-shot: decided by dsh; the plugin cannot read the final restricted result and the card reports "tools are finally granted by the system".
+- **Cost figures are estimates**: computed from an average per-dispatch price (measured once per model); fine-grained per-token pricing is on the roadmap. The UI labels estimates as such and shows a note when the sample size is small.
 
 ## Repository structure
 
@@ -95,26 +113,36 @@ Delegation never lets a subagent gain more power than you already have — this 
 dsh-subagent-profile/
 ├── index.mjs                     # host side: the plugin itself (dispatch tool, profile provider, service, HTTP routes)
 ├── lib/
-│   ├── client.js                 # browser side: settings page + dispatch tool-call card
+│   ├── client.js                 # browser side: settings page + ledger + dispatch tool-call card
 │   └── core/                     # host-side modules (lightweight layering)
 │       ├── pure.mjs              # dependency-free pure functions (sanitize / prune / guard math — unit-tested)
 │       ├── shims.mjs             # the single @deepseek-ai import facade (guards fail loud, helpers degrade softly)
 │       ├── catalog.mjs           # tool-name → zh / category tables (zero-dep)
 │       ├── catalog-cache.mjs     # process-shared catalog snapshot (models / presets / tools, TTL cache)
 │       ├── cost-guard.mjs        # runtime capability checks (provider / model / reasoning effort)
-│       ├── decision-trace.mjs    # decision trace (gates / effective / settled) + failure ledger
+│       ├── cost-evidence.mjs     # counterfactual savings evidence (token-saving proof)
+│       ├── prices.mjs            # per-dispatch price table (average-based placeholder)
+│       ├── decision-trace.mjs    # decision trace (checks / effective / settled) + failure ledger
 │       ├── delegation.mjs        # background one-shot settling + child usage collection
-│       ├── dispatch-gates.mjs    # pre-dispatch gates (whitelist / cost / intersection / budget)
+│       ├── dispatch-gates.mjs    # pre-dispatch safety checks (whitelist / cost / intersection / budget)
 │       ├── dispatch-guard.mjs    # concurrency + per-parent token budget guard
 │       ├── dispatch-schema.mjs   # dispatch tool input/output schema declarations
 │       ├── dispatch-tool.mjs     # dispatch tool factory (defineTool + execute + syncTool)
+│       ├── draft-gates.mjs       # draft profile gates (three checks)
+│       ├── drafts-store.mjs      # draft profile persistence
 │       ├── escape.mjs            # escape-hatch allow store
-│       ├── evolution-ledger.mjs  # dispatch ledger (jsonl) + governance audit
-│       ├── evolution-summary.mjs # T1 aggregate summaries + advice text
+│       ├── evolution-ledger.mjs  # decision ledger (jsonl) + governance audit
+│       ├── evolution-summary.mjs # aggregate statistics (per-profile, capability/budget axes)
+│       ├── evolution-advice.mjs  # read-only dispatch suggestion generation
+│       ├── adoption-tracker.mjs  # child-result adoption verdict tracking (cross-restart)
+│       ├── adoption-reminder.mjs # adoption-verdict reminder generation
+│       ├── reminder-store.mjs    # reminder store + audit-coupled records
+│       ├── background-ledger.mjs # background job ledger (in-memory, resets on restart)
 │       ├── http-routes.mjs       # settings loopback HTTP routes
 │       ├── intersection.mjs      # tool-intersection pure core
 │       ├── presets-sync.mjs      # bundled preset self-install (hash-gated sync)
 │       ├── profile-provider.mjs  # the `profile` subagent provider
+│       ├── profile-directory.mjs # read-only profile directory (for the model)
 │       ├── profiles-store.mjs    # profile registry store + switch persistence
 │       └── whitelist.mjs         # system-trust preset whitelist
 ├── presets/orchestrator/         # bundled "orchestrator" agent preset (self-installed, synced on every startup)
@@ -126,7 +154,7 @@ dsh-subagent-profile/
 │   └── leak-scan.mjs             # public-release gate: scans all history + worktree for sensitive patterns
 ├── docs/
 │   └── screenshots/              # README screenshots
-├── test/                         # host-side tests (node:test, zero extra deps; 352 cases — bare subset in CI, junction local)
+├── test/                         # host-side tests (node:test, zero extra deps; 438 cases)
 │   ├── README.md / README.zh.md  # test directory guide (EN/ZH) — two-tier split explained
 │   ├── harness/ctx.mjs           # fake Cordis ctx + ~/.dsh isolation
 │   ├── pure / input-schema / catalog-integrity.test.mjs   # bare tier (import-free, runs in bare CI)

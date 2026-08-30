@@ -73,6 +73,7 @@ test('/options/versions 路由：返回 {ok, versions, warnings} 结构', async 
       assert.equal(typeof resp.json.versions[pkg], 'string', `${pkg} version 必须为字符串`);
     }
     assert.ok(Array.isArray(resp.json.warnings), 'warnings 必须为数组');
+    assert.equal(typeof resp.json.pluginVersion, 'string', 'pluginVersion 必须为字符串');
   } finally { iso.restore(); iso.teardown(); }
 });
 

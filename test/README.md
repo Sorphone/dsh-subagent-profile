@@ -13,8 +13,8 @@ can therefore only run tests whose **entire import chain** stays within node bui
 
 | Tier | Files | Tests | Why |
 |---|---|---|---|
-| **bare** (`npm run test:bare`) | `pure` / `input-schema` / `catalog-integrity` | 26 | Static imports only from `lib/core/pure.mjs` / `catalog.mjs` — import-free, no junction. Runs in bare CI. |
-| **junction** (local only) | `characterization` / `facade` / `gating` / `persist` / `recycle` / `cost-guard` / `continuable-guard` | 75 | Dynamically `await import('../index.mjs')` or `../lib/core/shims.mjs` → loads `@deepseek-ai`. Needs a junction host with `@deepseek-ai` installed; `npm test` / `node --test "test/**/*.test.mjs"` runs the full 101 locally. |
+| **bare** (`npm run test:bare`) | `pure` / `input-schema` / `catalog-integrity` | 27 | Static imports only from `lib/core/pure.mjs` / `catalog.mjs` — import-free, no junction. Runs in bare CI. |
+| **junction** (local only) | all `test/*.test.mjs` except the bare three (`pure` / `input-schema` / `catalog-integrity`) | 402 | Dynamically `await import('../index.mjs')` or `../lib/core/shims.mjs` → loads `@deepseek-ai`. Needs a junction host with `@deepseek-ai` installed; `npm test` / `node --test "test/**/*.test.mjs"` runs the full 429 locally. |
 
 Note that a module being import-free does **not** make its test bare: `cost-guard` / `persist` /
 `recycle` unit-test import-free modules but still dynamically import `index.mjs` in their bodies,
