@@ -146,6 +146,28 @@ test('parent_adopted：内容复用（子输出片段出现在父后续文本）
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('parent_adopted：onDecided 钩子逐条收到「明确未采纳」记录（Task 42 P2 提醒源）', () => {
+  const { dir, evoDir } = tmpEvoDir();
+  try {
+    const decided = [];
+    const tracker = createAdoptionTracker({
+      stateFile: join(evoDir, 'adopted-state.json'),
+      windowN: 2,
+      windowMs: null,
+      now: () => 1000,
+      onDecided: (rec) => decided.push(rec),
+    });
+    tracker.register({ parentSessionId: 's1', id: 'c1', ledgerKey: LEDGER_KEY, mode: 'foreground', dispatchedAt: 0 });
+    tracker.handleEvent({ id: 's1' }, anchorEvent(1, 's1', 'foreground', 'c1'));
+    tracker.handleEvent({ id: 's1' }, { type: 'turn/end', seq: 2, data: { turn: 1 } });
+    tracker.handleEvent({ id: 's1' }, { type: 'turn/end', seq: 3, data: { turn: 2 } });
+    assert.equal(decided.length, 1, '窗口到期必须逐条触发 onDecided');
+    assert.equal(decided[0].ledgerKey, LEDGER_KEY);
+    assert.equal(decided[0].parentSessionId, 's1');
+    assert.equal(decided[0].id, 'c1');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('apply 接线：根 ctx 订阅 session/event，agent/disposed 触发采纳判定（契约级）', async () => {
   const iso = makeIsolatedDshHome();
   try {

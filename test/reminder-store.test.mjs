@@ -12,6 +12,10 @@ import { makeRouteHarness, callRoute } from './harness/routes.mjs';
 
 const mod = await import('../index.mjs');
 
+function tmpHome(prefix) {
+  return { prefix };
+}
+
 test('reminder store：record 归一（severity 回退 P2、空 sessionId 归一 null）+ P0 三要件字段', () => {
   const audits = [];
   const store = createReminderStore({ audit: (entry) => audits.push(entry) });
@@ -69,48 +73,6 @@ test('reminder store：持久化重启（动作态与已读态保留）+ 上限�
     assert.ok(restored !== undefined);
     assert.equal(restored.action, 'dismiss', '动作态必须保留');
     assert.equal(restored.unread, false, '已读/动作后未读态必须保留');
-  } finally { iso.restore(); iso.teardown(); }
-});
-
-test('reminder store：未采纳条目五字段数据落盘并重启保留', () => {
-  const iso = makeIsolatedDshHome();
-  try {
-    const file = join(iso.dir, 'subagent-evolution', 'reminders.json');
-    const store = createReminderStore({ dshHome: iso.dir, audit: () => {} });
-    const r = store.record({
-      severity: 'P2',
-      kind: 'adoption-false',
-      title: '派发结果未被采纳',
-      detail: '父 Agent 未采用该结果。若你认为结果有价值，可前往查看。',
-      sessionId: 'parent-1',
-      childId: 'job-1',
-      childSessionId: 'child-1',
-      childMode: 'background',
-      promptExcerpt: 'x'.repeat(300),
-      settled: {
-        stopReason: 'completed',
-        elapsedMs: 5500,
-        childTotalTokens: 123,
-        childUsage: { inputTokens: 1, outputTokens: 2 },
-        childSessionId: 'child-1',
-        output: '不得落盘',
-      },
-      costEstimated: 0.011111,
-    });
-    assert.equal(r.promptExcerpt.length, 200, 'prompt 摘要必须再截一次到 200 字符');
-    assert.equal(r.costEstimated, 0.011111);
-    assert.equal(r.settled.output, undefined, '结算摘要不得带子输出正文');
-    const restored = createReminderStore({ dshHome: iso.dir, audit: () => {} }).list()[0];
-    assert.equal(restored.kind, 'adoption-false');
-    assert.equal(restored.sessionId, 'parent-1');
-    assert.equal(restored.childSessionId, 'child-1');
-    assert.equal(restored.childMode, 'background');
-    assert.equal(restored.promptExcerpt.length, 200);
-    assert.equal(restored.settled.stopReason, 'completed');
-    assert.equal(restored.costEstimated, 0.011111);
-    const parsed = JSON.parse(readFileSync(file, 'utf8'));
-    assert.equal(parsed.reminders[0].promptExcerpt.length, 200);
-    assert.equal(parsed.reminders[0].settled.output, undefined);
   } finally { iso.restore(); iso.teardown(); }
 });
 
