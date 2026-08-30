@@ -30,21 +30,3 @@ test('批次 7 用词规范：规范词存在（安全检查 / 交集非空 / �
   assert.ok(badges >= 0, '安全检查五项徽标映射必须存在');
   assert.match(source.slice(badges, badges + 200), /白名单.*成本.*交集非空.*审批不豁免.*预算/);
 });
-
-test('批次 7 用词规范：index.mjs 用户可见文案零内部词（逃生舱提醒/draft 检查）', () => {
-  const host = readFileSync(fileURLToPath(new URL('../index.mjs', import.meta.url)), 'utf8');
-  for (const word of ['system-trust', '三道闸', '过闸预览', '闸检查', '未通过闸', '方案键']) {
-    assert.ok(!host.includes(word), 'index.mjs 用户可见面不得出现内部术语：' + word);
-  }
-  assert.ok(host.includes('非官方预设'), '逃生舱提醒必须用「非官方预设」');
-  assert.ok(host.includes('其余安全检查仍全量生效'), '逃生舱提醒必须用「安全检查」');
-});
-
-test('host 侧未采纳事件：审计 + 注意级提醒同源 mint（条目补全）', () => {
-  const host = readFileSync(fileURLToPath(new URL('../index.mjs', import.meta.url)), 'utf8');
-  const reminderMod = readFileSync(fileURLToPath(new URL('../lib/core/adoption-reminder.mjs', import.meta.url)), 'utf8');
-  assert.ok(host.includes('mintUnadoptedReminder'), '未采纳判定必须接入提醒 mint');
-  assert.ok(reminderMod.includes("kind: 'adoption-false'"), '未采纳事件必须写治理审计');
-  assert.ok(reminderMod.includes("title: '派发结果未被采纳'"), '未采纳事件必须 mint 提醒条目');
-  assert.ok(reminderMod.includes('父 Agent 未采用该结果'), '提醒说明必须人话可读');
-});

@@ -1,13 +1,13 @@
 // test/ledger-toolset-fields.test.mjs — 批次 7 工具集子节 host 侧最小字段集：
 // intersection 闸（continuable）output 增加 effectiveAllowNames 与 removedTools
-// （移除清单：run_code 固定移除 + 不在白名单），台账证据层工具集子节展示用。
+// （移除清单：run_code 固定移除 + 不在白名单），账本证据层工具集子节展示用。
 // removedTools 超 8 项截断为 { values, truncated }，与名单类截断口径一致。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyIntersectionGate } from '../lib/core/dispatch-gates.mjs';
 
-function gateOf() {
+function gateOf(name, verdict) {
   const trace = { gates: [] };
   applyIntersectionGate(trace, 'continuable', { parentToolCount: 5, requestedToolFilter: { allow: ['read', 'grep'] }, mode: 'continuable' }, { toolFilter: { allow: ['read', 'grep'] } }, ['read', 'write', 'grep', 'bash', 'run_code', 'glob']);
   const gate = trace.gates.find((g) => g.name === 'intersection');
