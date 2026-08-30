@@ -16,17 +16,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   computeSummaries,
-  computeAdvice,
-  buildAdviceText,
   parseDispatchRecords,
-  readSummaries,
-  refreshSummaries,
   writeSummaries,
   weightedSuccess,
   adoptStatus,
   confidenceLevel,
-  suggestAdvice,
 } from '../lib/core/evolution-summary.mjs';
+import {
+  computeAdvice,
+  buildAdviceText,
+  readSummaries,
+  refreshSummaries,
+  suggestAdvice,
+} from '../lib/core/evolution-advice.mjs';
 
 // --- fixture：与 evolution-ledger 记录 schema 一致 ----------------------------------
 
@@ -399,6 +401,51 @@ test('suggestAdvice：legacy summaries（无 axes 字段）回退键文本判定
   assert.equal(legacyBudget.suggestion, '升');
   const legacyInline = suggestAdvice({ l1Entry: legacyEntry, profileKey: '(inline)', now: 1000 });
   assert.equal(legacyInline.suggestion, '平');
+});
+
+// --- F6：summaries.json 版本不符/损坏 → fail-soft 重建 ---------------------------------
+
+test('computeAdvice：summaries.json 版本不符 → fail-soft 重建并产出建议（F6）', () => {
+  const t = tmpDir();
+  try {
+    const evoDir = join(t.dir, 'subagent-evolution');
+    mkdirSync(evoDir, { recursive: true });
+    const dispatchFile = join(evoDir, 'dispatch.jsonl');
+    const summariesFile = join(evoDir, 'summaries.json');
+    // 台账：3 条欠佳标准 profile 记录（1 完成 2 失败 → 建议产出）。
+    const base = { effective: { preset: 'standard', provider: 'p1', model: 'm1' } };
+    writeFileSync(dispatchFile, [
+      JSON.stringify({ ...base, outcome: { status: 'completed' } }),
+      JSON.stringify({ ...base, outcome: { status: 'failed' } }),
+      JSON.stringify({ ...base, outcome: { status: 'failed' } }),
+    ].join('\n') + '\n', 'utf8');
+    // 未知版本资产：必须被重建而非静默跳过。
+    writeFileSync(summariesFile, JSON.stringify({ v: 2, l1: { bogus: { deployments_total: 99 } }, l2: {} }), 'utf8');
+    const warns = [];
+    const { advice, global } = computeAdvice({ summariesFile, dispatchFile, whitelist: new Set(['standard']), logger: { warn: (m) => warns.push(m) } });
+    assert.equal(advice.length, 1, '重建后必须产出建议');
+    assert.equal(advice[0].suggestion, '降');
+    assert.equal(global.total, 3);
+    const parsed = JSON.parse(readFileSync(summariesFile, 'utf8'));
+    assert.equal(parsed.v, 1, '重建必须写回 v:1');
+    assert.ok(warns.some((m) => m.includes('版本')), '版本不符必须告警留痕');
+  } finally { t.cleanup(); }
+});
+
+test('computeAdvice：summaries.json 损坏 → fail-soft 重建（F6）', () => {
+  const t = tmpDir();
+  try {
+    const evoDir = join(t.dir, 'subagent-evolution');
+    mkdirSync(evoDir, { recursive: true });
+    const dispatchFile = join(evoDir, 'dispatch.jsonl');
+    const summariesFile = join(evoDir, 'summaries.json');
+    writeFileSync(dispatchFile, JSON.stringify({ effective: { preset: 'standard' }, outcome: { status: 'completed' } }) + '\n', 'utf8');
+    writeFileSync(summariesFile, '{broken json', 'utf8');
+    const { advice } = computeAdvice({ summariesFile, dispatchFile, whitelist: new Set(['standard']), logger: { warn: () => {} } });
+    assert.deepEqual(advice, [], 'N<3 重建后不产出建议但不得报错');
+    const parsed = JSON.parse(readFileSync(summariesFile, 'utf8'));
+    assert.equal(parsed.v, 1, '损坏资产必须被重建为 v:1');
+  } finally { t.cleanup(); }
 });
 
 test('buildAdviceText：复用 computeAdvice 并写回 cooldown', () => {
