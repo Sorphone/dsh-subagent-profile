@@ -53,7 +53,15 @@ test('Task 45：banner 注册到 conversation.session.header.utilities 槽', () 
   assert.match(source, /dsh-subagent-profile-subagent/, 'banner 条目 id 存在');
 });
 
-test('Task 45：层 2 显 n/a 不虚报 + SC2 continuable 兜底文案', () => {
-  assert.match(source, /委派深度\/工具集摘要\/固化模型：n\/a（宿主未投影）/);
+test('Task 45（批次 6.5/7 规格 2.5）：来源并入标题后缀 + 层 2 不渲染 + SC2 continuable 兜底文案', () => {
+  // 来源不再以裸 UUID chip 展示：标题后缀「· 由父会话派发」，悬停 title 显示完整 UUID。
+  assert.match(source, /subagentOriginSuffix: '· 由父会话派发'/);
+  assert.match(source, /className: 'sap-subagentOrigin', title: parentId/);
+  // 层 2 行（委派深度/工具集摘要/固化模型）宿主未投影前不渲染。
+  assert.doesNotMatch(source, /subagentLayer2Na/);
+  assert.doesNotMatch(source, /chipNa/);
+  // SC2 continuable 兜底文案保留。
   assert.match(source, /已读模型\/工具\/人格，强度与预设受宿主限制/);
+  // CSS 加固：banner 不侵占宿主空间（宿主按钮优先级恒最高）。
+  assert.match(source, /\.sap-subagentBanner\{[^}]*max-width:42%[^}]*min-width:0[^}]*overflow:hidden/);
 });
