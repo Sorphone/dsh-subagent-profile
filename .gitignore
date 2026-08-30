@@ -2,9 +2,12 @@ node_modules/
 *.log
 .DS_Store
 
-# 本地开发文档（含不公开内容），一律不随 git 发布。
-# 注意：docs/ 下新增 md 默认视为内部文档，需要公开时先移出 docs/ 再跟踪。
-docs/*.md
+# 内部文档纪律（2026-08-31）：所有 markdown 默认不进 git；公开文档必须显式放行
+*.md
+!README.md
+!README.zh.md
+!test/README.md
+!test/README.zh.md
 
 # 发布脚本（内部发布工具），不随 git 发布，仅本地使用
 scripts/release.mjs
