@@ -314,7 +314,7 @@ test('路由 /escape-add：拒绝已 system-trust 的预设', async () => {
 test('设置页代码审查：ZH.escapeWarn 键存在且文案精确 + 逃生舱开关接线', () => {
   const src = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
   assert.ok(src.includes('escapeWarn'), 'client 必须含 escapeWarn ZH 键');
-  const exact = '逃生舱已开启：允许派发非 system-trust 预设。风险自负——其余三道安全闸仍全量生效，每个放行都会留审计记录。';
+  const exact = '逃生舱已开启：允许派发非官方预设。风险自负——其余安全检查仍全量生效，每个放行都会留审计记录。';
   assert.ok(src.includes(exact), 'escapeWarn 文案必须与规格精确一致');
   assert.ok(src.includes('/set-escape'), 'client 必须调用 /set-escape');
   assert.ok(src.includes('escapeEnabled'), 'client 必须维护 escapeEnabled 状态');

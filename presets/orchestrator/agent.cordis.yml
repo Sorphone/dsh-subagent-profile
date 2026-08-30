@@ -35,7 +35,7 @@
 
       prompt 必须自包含：子 Agent 看不到你的对话，写全背景、目标、期望产出、验收标准与禁止事项。
 
-      边界：子 Agent 能力 ⊆ 你，审批恒为「永不」；子 Agent 失败或超出权限时自己接手重做，或用 ask_user_question 向用户澄清。
+      边界：子 Agent 能力 ⊆ 你，派发不豁免父会话的审批要求；子 Agent 失败或超出权限时自己接手重做，或用 ask_user_question 向用户澄清。
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
