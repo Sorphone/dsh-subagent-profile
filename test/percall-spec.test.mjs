@@ -11,6 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DISPATCH_PARAMETERS } from '../lib/core/dispatch-schema.mjs';
+import { requestedOf } from '../lib/core/decision-trace.mjs';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
 
 const mod = await import('../index.mjs');
@@ -109,5 +110,37 @@ test('continuable：per-call reasoningEffort 被忽略但结果回显请求值�
     assert.equal(out.decisionTrace.effective.reasoningEffort, 'high', '轨迹 effective.reasoningEffort 回显请求值');
     assert.ok(out.decisionTrace.effective.ignored.includes('reasoningEffort'), '轨迹 effective.ignored 必须含 reasoningEffort');
     assert.equal(captured.request.agentOptions, undefined, 'continuable request 不得携带 agentOptions（effort 被忽略）');
+  } finally { iso.restore(); iso.teardown(); }
+});
+
+// ---- ④ 未知字段 fail-visible（F5）----------------------------------------------
+
+test('F5：requestedOf 把未知 per-call 字段记入 unknown_keys（键集以 DISPATCH_PARAMETERS 为准）', () => {
+  const requested = requestedOf({ prompt: 'p', model: 'm1', bogus: 1, toolFilter: { allow: ['read'] } });
+  assert.deepEqual(requested.unknown_keys, ['bogus'], '未知字段必须记录到决策轨迹');
+  assert.equal(requested.model, 'm1', '已知字段不受影响');
+  const clean = requestedOf({ prompt: 'p' });
+  assert.equal(clean.unknown_keys, undefined, '无未知字段时不写该键');
+  // 已知键集合与 DISPATCH_PARAMETERS 同源（单一事实来源），防止两处键集漂移。
+  const withModes = requestedOf({ prompt: 'p', run_in_background: true, continuable: false });
+  assert.equal(withModes.unknown_keys, undefined, '模式字段不得误报为未知');
+});
+
+test('F5：execute 层未知字段进入 decisionTrace.requested.unknown_keys（不静默吞）', async () => {
+  const iso = makeIsolatedDshHome();
+  try {
+    const subagentsStart = async () => ({
+      result: { stopReason: 'completed', output: [{ type: 'text', text: 'ok' }] },
+      dispose: async () => {},
+    });
+    const { ctx, records } = createFakeCtx({ subagentsStart });
+    await mod.apply(ctx);
+    const tool = records.registerToolCalls.find((t) => t.name === 'dispatch');
+    const out = await tool.execute(
+      { prompt: 'task', model: 'm1', bogus: true, anotherUnknown: 'x' },
+      { agent: makeForegroundParent(), signal: undefined }
+    );
+    assert.deepEqual(out.decisionTrace.requested.unknown_keys, ['bogus', 'anotherUnknown'], '未知字段必须记录到决策轨迹');
+    assert.equal(out.decisionTrace.requested.model, 'm1', '已知字段不受影响');
   } finally { iso.restore(); iso.teardown(); }
 });

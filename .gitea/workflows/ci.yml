@@ -17,9 +17,9 @@ name: CI
 
 on:
   push:
-    branches: [v2-midterm, main]
+    branches: [dev, main]
   pull_request:
-    branches: [v2-midterm, main]
+    branches: [dev, main]
 
 jobs:
   bare-ci:

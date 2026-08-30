@@ -45,7 +45,7 @@ export default [
   // 无相对 require/多文件路由，物理多文件拆分需引入构建，违背无构建基线）。
   // 函数级行门（≤50）全量生效：纯数据/纯函数上提模块作用域，React 依赖件经
   // 参数注入的 maker（makeChip / makeDispatchToolview / makeProfilesSection）
-  // 装配。债务登记：ADR-client-js-split.md。
+  // 装配。拆分决策的完整论证见 docs/ADR-client-js-split.md（本机内部文档，不入 git）。
   {
     files: ['lib/client.js'],
     languageOptions: {
