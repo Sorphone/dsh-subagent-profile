@@ -2,7 +2,7 @@
 
 <!-- Hero -->
 <div align="center">
-  <b style="font-size: 1.15em;">子 Agent 派发方案化插件 —— 用对的人（预设 / 模型 / 推理强度）干对的事</b><br /><br />
+  <b style="font-size: 1.15em;">子 Agent 派发插件 —— 派发可控 · 成本有数 · 决策留痕</b><br /><br />
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" />
   <img alt="npm" src="https://img.shields.io/npm/v/dsh-subagent-profile.svg" />
   <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.0--rc.6%20~%200.2.0-blue.svg" />
@@ -10,143 +10,171 @@
 
 <div align="center"><a href="README.md">English</a> · 中文</div>
 
-为 [DeepSeek Harness](https://github.com/deepseek-ai/dsh)（DSH）打造。
+适用于 [DeepSeek Harness](https://github.com/deepseek-ai/dsh)（DSH）。
 
-> 《思考，快与慢》：系统 1 快而省，系统 2 慢而稳。内置的 `subagent` 给所有子任务同一个「大脑」，分不出快慢；`dsh-subagent-profile` 让你按任务指定——调研用快思考，攻坚用慢思考，常用搭配存成命名**方案**。
+> DeepSeek Harness 子 Agent 派发插件：按任务为子代理选模型、推理强度与工具范围，常用组合存成命名方案随时复用；内置安全检查、成本估算与节省分析、完整决策台账。
 
-## 为什么选这个插件
+## 为什么需要这个插件
 
 | | 内置 `subagent` | `dsh-subagent-profile` |
 |---|---|---|
-| 按子任务指定模型/预设 | ❌ 每个子任务同一个大脑 | ✅ 每个子任务单独指定 |
-| 常用组合复用 | ❌ | ✅ 命名方案（profiles） |
-| 收窄工具范围 | ❌ | ✅ 白名单 ∩ 父工具，`run_code` 一律移除 |
-| 成本护栏 | ❌ | ✅ 模型/推理强度/token/深度上限 |
-| GUI 管理 | ❌ | ✅ 设置页 |
-
-- **按子任务指定子 Agent 的「大脑」。** `dispatch` 给每个子任务单独指定：用哪个预设（composition）、哪个模型、哪种推理强度、只开哪些工具、给多少 token 上限。查资料和写代码两个子任务可以用完全不同的配置——这是内置 `subagent` 做不到的（它只能让子任务继承父 Agent 的同一套配置）。
-- **把常用搭配存成命名方案，按名调用。** 「方案」= 预设 + 模型 + 推理强度 + 工具范围 + 人设的一揽子配置。把「调研」存成 `researcher`（关深度推理、只留检索工具），以后 `dispatch(profile="researcher")` 即可；内置 `swap-standard`（切到 standard 全套编码工具）和 `researcher` 两个现成方案，也能在设置页自己增删改。
-- **每次派发都看得见实际用了什么。** 结果里标注实际生效的方案/预设/模型/推理强度，日志带 `[dsh-subagent-profile]` 标记，方便排查。
+| 按子任务选模型/预设 | ❌ 每个子任务同一个「大脑」 | ✅ 按任务逐个指定 |
+| 可复用的命名方案 | ❌ | ✅ 方案（profile） |
+| 工具范围收敛 | ❌ | ✅ 白名单 ∩ 父会话，`run_code` 恒移除 |
+| 派发前安全检查 | ❌ | ✅ 白名单/成本/交集/审批/预算，全程记录 |
+| 成本可见 | ❌ | ✅ 每次派发的成本估算 + 节省对照 |
+| 派发决策台账 | ❌ | ✅ 请求vs生效、检查结果、执行、结算全留痕 |
+| 界面管理 | ❌ | ✅ 设置页 + 会话内台账标签页 |
 
 ## 安装
 
 ```bash
 dsh plugin --profile web add dsh-subagent-profile        # 发布包
-dsh plugin --profile web add ./dsh-subagent-profile      # 本地检出
+dsh plugin --profile web add ./dsh-subagent-profile      # 本地源码
 ```
 
-装完**重启 `dsh web`**。这是一个标准 **bundle 插件**，装好后自动提供：`dispatch` 派发工具、profile provider、`subagent-profiles` 服务、`/subagent-profiles/*` 本机管理接口，以及 Web 界面里的「子 Agent 方案」设置页与 `dispatch` 工具调用卡片。插件启动时还会**自动装好一个 agent 预设**——**`orchestrator`「编排者模式」**，在「新建会话」的预设选择器里选它即可。同步幂等、每次启动都执行，升级插件即更新预设。
+重启 `dsh web`。这是一个标准的 **bundle 插件**：提供 `dispatch` 工具、方案提供者、`subagent-profiles` 服务、`/subagent-profiles/*` 回环管理路由、设置页（「子 Agent 方案」）、会话内派发决策台账标签页，以及 web 界面中的 `dispatch` 工具卡片。启动时还会**自动安装一个 agent 预设**——**`orchestrator`**（「编排者模式」）——在新会话的预设选择器里选用。同步是幂等的且每次启动重跑，升级插件即更新预设。
 
-## 用法
+## 使用
 
 ### 1. 配置子 Agent 方案
 
-在设置页管理命名方案——每个方案打包预设 + 模型 + 推理强度 + 工具范围（可选人设），可单独启用、禁用、编辑或批量重置。内置两个现成方案：
+方案在设置页管理——每个方案打包预设 + 模型 + 推理强度 + 工具范围（可选人设），可单独启用、禁用、编辑、重置。内置两个：
 
 | 方案 | 用途 |
 |---|---|
-| `swap-standard` | 子 Agent 切换为 standard 全套编码工具 |
-| `researcher` | 关深度推理、只留检索工具 |
+| `swap-standard` | 让子代理切换到完整标准编码工具集 |
+| `researcher` | 关闭深度推理，仅搜索工具 |
 
-方案保存在 `~/.dsh/subagent-profiles.json`，改完立即生效（在设置页编辑）。
+方案数据存于 `~/.dsh/subagent-profiles.json`，设置页修改即时生效。
 
-![内置方案列表：可编辑、删除、单独启用/禁用](docs/screenshots/settings-page1.png)
+![内置方案列表——可编辑、可删除、可单独开关](docs/screenshots/settings-page1.png)
 
-![配置方案：设置页全貌（含新建方案表单）](docs/screenshots/settings-page2.png)
+![配置方案——完整设置页与新增方案表单](docs/screenshots/settings-page2.png)
 
-### 2. 按任务派发 —— `dispatch` 工具
+### 2. 按子任务派发——`dispatch` 工具
 
 ```js
 dispatch(
   profile: "researcher",        // 预设 + 模型 + 推理强度 + 工具范围
-  prompt: "调研 DSH 插件生态，列出直接竞品并对比",
+  prompt: "调研 DSH 插件生态并对比直接竞品",
   run_in_background: true
 )
 ```
 
-![dispatch 工具调用卡片：每次派发都显示实际生效的配置](docs/screenshots/dispatch-card.png)
+![dispatch 工具卡片——每次结果都显示实际生效的配置](docs/screenshots/dispatch-card.png)
+
+### 3. 在派发决策台账中复盘
+
+每个会话都有「派发决策台账」标签，记录每次派发决策：父会话看到了什么、请求了什么，实际生效了什么（请求被忽略处高亮），哪些工具被移除及原因，执行过程如何（含停滞与主 Agent 干预），以及成本多少。安全检查失败时给出修复方向。
 
 ## 安全模型
 
-委派绝不会让子 Agent 拿到比你更多的权限，默认生效、无需配置：
+委派永远不会让子代理获得比你更大的权限——这是默认行为，无需配置：
 
-- **工具只减不增。** 子 Agent 最终能用的工具，是「方案允许的工具」和「主 Agent 已有工具」的交集，且 `run_code`（运行代码）一律移除。
-- **审批恒为「永不」。** 子 Agent 无法扩大自己的权限，需要审批的操作会被自动拒绝。
-- **成本设上限。** 模型、推理强度、token、递归深度都有限制，越界直接报错、不会悄悄降级。
+- **工具只减不增。** 子代理的工具集 = 方案工具 ∩ 父会话工具，且 `run_code` 恒移除。
+- **审批永不豁免。** 委派不豁免宿主的审批要求；需要审批的操作自动拒绝。
+- **成本有上限。** 模型、推理强度、token、递归深度全部有界；越界值大声失败而非静默降级。
+- **逃生舱，显式开启。** 非官方预设可逐个放行（默认关闭，每次放行留审计）。
 
-## 数据
+## 可观测性与通知
 
-- `~/.dsh/subagent-profiles.json` —— 方案注册表（由设置页编辑）。
-- `~/.dsh/subagent-profiles.state.json` —— 插件的启用/禁用开关（默认启用）。
+- **实时状态。** 后台派发的阶段徽标实时更新（发起/检查/创建/执行中/结算），宿主任务事件驱动，轮询兜底。
+- **提醒中心。** 紧急事件（逃生舱放行、审计降级、预算异常）触发常驻红角标；通知中心里每条提醒都带完整上下文——主会话、子会话、任务摘要、结果状态——并可一键跳转对应会话。正常编排事件（如父会话未采纳某次派发结果）只记审计台账，不打断你。
+- **派发优化建议。** 基于历史派发统计，插件可向主 Agent 注入只读优化提示（如「该方案近期成功率偏低，可考虑换方案」）——只提示，不自动改任何配置。
+- **子会话页头徽标。** 子会话页头显示紧凑摘要标签（如 `继承父会话 · 前台`），悬停查看全部字段（模型/推理强度/预设/模式/来源）。
+
+## 数据文件
+
+- `~/.dsh/subagent-profiles.json` —— 方案注册表（设置页编辑）。
+- `~/.dsh/subagent-profiles.state.json` —— 插件开关状态（默认启用）。
 - `~/.dsh/subagent-profiles.failed-traces.json` —— 失败台账（派发失败轨迹）。
-- `~/.dsh/.agent-presets/orchestrator/` —— 自动安装的 `orchestrator` 编排者预设（每次启动由打包的 `presets/orchestrator/` 同步）。
+- `~/.dsh/subagent-evolution/` —— 派发决策台账与统计：
+  - `dispatch.jsonl` —— 每次派发的决策记录（不含 prompt 原文）。
+  - `summaries.json` —— 按方案聚合的统计（带版本号，损坏自动重建）。
+  - `adopted-state.json` —— 子结果采纳判定状态（跨重启）。
+  - `reminders.json` —— 提醒存储（一条提醒 = 一条审计记录）。
+- `~/.dsh/.agent-presets/orchestrator/` —— 自动安装的 `orchestrator` 预设（每次启动从内置 `presets/orchestrator/` 同步）。
 
-尊重 `DSH_HOME`，默认 `~/.dsh`。卸载插件会删除上述三个数据文件与自动安装的 `orchestrator` 预设目录（其它插件的预设不受影响）；重新安装或重新启动会重新同步预设并重新生成数据文件。
+尊重 `DSH_HOME` 环境变量（默认 `~/.dsh`）。卸载插件会移除上述数据文件与自动安装的 `orchestrator` 预设目录（其他插件的预设不动）；重装或重启会重新同步预设并重建数据文件。
 
 ## 已知限制
 
-- **后台**一次性派发需要加载 `@deepseek-ai/dsh-jobs` 与 `@deepseek-ai/dsh-tool-jobs`，否则报「后台派发不可用：缺少 jobs 服务」。
-- **可续跑**模式走 DSH 标准组合路径，因此 `preset` 换用与 `reasoningEffort` 会被忽略（继承父预设、使用默认推理强度）。
-- **可续跑**工具门为插件侧缓解：子 Agent 的 `allow` 预加工为闭集 —— 父工具集 − `run_code` − `deny`，再与 `allow` 取交集。**假设：** 可续跑继承父预设 ⇒ 子工具集 ≈ 父工具集。**失效条件：** 任何导致子工具集与父工具集不一致的宿主行为变化（非仅换用预设——例如未来允许换用预设、组合不同工具集等），父集都可能含子集没有的工具，`tools.restrict` 会抛「未知工具」→ 本缓解自动降级为 fail-loud（保守安全）；待上游提供 provider 守卫接缝后替换为真交集。
+- **后台派发**需要 `@deepseek-ai/dsh-jobs` 与 `@deepseek-ai/dsh-tool-jobs` 已加载；否则报「dispatch: 后台派发不可用：缺少 jobs 服务」。
+- **持久（continuable）模式**走 DSH 标准组合路径，`preset` 换用与 `reasoningEffort` 会被忽略（子代理继承父预设与默认推理强度）。
+- **子代理的最终工具集由谁决定，取决于模式**：
+  - 持久（continuable）模式：由本插件预先收敛——子代理 `allow` =（父工具集 − `run_code` − `deny`）∩ `allow`。前提假设：持久模式沿用父会话预设，故子工具集与父会话基本一致；一旦 dsh 的行为变化导致两者不同（如未来支持预设换用后组合出不同工具集），工具收敛会**直接报错拒绝**（保守安全，绝不静默放行），待 dsh 官方提供相应接口后替换为真正的父 ∩ 子交集。
+  - 一次性模式：由 dsh 决定，插件读不到最终受限结果；卡片显示「工具由系统最终授予」。
+- **成本是估算**：按每次派发的均价计算（每个模型实测一次）；按 token 的精细计价在路线图中。界面明确标注「估算」，样本不足时显示说明。
 
-## 目录结构
+## 仓库结构
 
 ```
 dsh-subagent-profile/
-├── index.mjs                     # 宿主侧：插件本体（dispatch 工具、profile provider、服务、HTTP 路由）
+├── index.mjs                     # 宿主侧：插件本体（dispatch 工具、方案提供者、服务、HTTP 路由）
 ├── lib/
-│   ├── client.js                 # 浏览器侧：设置页 + dispatch 工具调用卡片
+│   ├── client.js                 # 浏览器侧：设置页 + 台账 + dispatch 工具卡片
 │   └── core/                     # 宿主侧模块（轻量分层）
-│       ├── pure.mjs              # 无依赖纯函数（净化 / 剪枝 / 护栏计算——可单测）
-│       ├── shims.mjs             # @deepseek-ai 依赖唯一入口（facade：守卫型 fail-loud、功能映射型软降级）
-│       ├── catalog.mjs           # 工具名 → 中文/分类数据表（零依赖）
-│       ├── catalog-cache.mjs     # 进程级共享 catalog 快照（模型/预设/工具，TTL 缓存）
-│       ├── cost-guard.mjs        # 运行时能力校验（provider / model / reasoningEffort）
-│       ├── decision-trace.mjs    # 决策轨迹（gates/effective/settled）+ 失败台账
-│       ├── delegation.mjs        # 后台 one-shot 结算 + 子会话 usage 收集
-│       ├── dispatch-gates.mjs    # 派发预检闸（白名单/成本/交集/预算）
-│       ├── dispatch-guard.mjs    # 并发 + 每父累计 token 预算守卫
+│       ├── pure.mjs              # 零依赖纯函数（清洗/剪枝/护栏数学——单测覆盖）
+│       ├── shims.mjs             # 唯一的 @deepseek-ai 导入门面（护栏大声失败，辅助软降级）
+│       ├── catalog.mjs           # 工具名 → 中文/分类表（零依赖）
+│       ├── catalog-cache.mjs     # 进程共享目录快照（模型/预设/工具，TTL 缓存）
+│       ├── cost-guard.mjs        # 运行时能力检查（提供方/模型/推理强度）
+│       ├── cost-evidence.mjs     # 省 token 反事实对照证据
+│       ├── prices.mjs            # 每次派发单价表（当前为均价占位）
+│       ├── decision-trace.mjs    # 决策轨迹（检查/生效/结算）+ 失败台账
+│       ├── delegation.mjs        # 后台一次性结算 + 子用量采集
+│       ├── dispatch-gates.mjs    # 派发前安全检查（白名单/成本/交集/预算）
+│       ├── dispatch-guard.mjs    # 并发 + 每父会话 token 预算护栏
 │       ├── dispatch-schema.mjs   # dispatch 工具输入/输出 schema 声明
 │       ├── dispatch-tool.mjs     # dispatch 工具工厂（defineTool + execute + syncTool）
-│       ├── escape.mjs            # 逃生舱放行集 store
-│       ├── evolution-ledger.mjs  # 派发台账（jsonl）+ 治理审计
-│       ├── evolution-summary.mjs # T1 聚合 summaries + 建议文案
-│       ├── http-routes.mjs       # 设置页 loopback HTTP 路由
-│       ├── intersection.mjs      # 工具交集纯函数核心
-│       ├── presets-sync.mjs      # bundled 预设自安装（哈希门控同步）
-│       ├── profile-provider.mjs  # `profile` 子 Agent provider
-│       ├── profiles-store.mjs    # profile 注册表 store + 开关持久化
+│       ├── draft-gates.mjs       # 草稿方案三道闸
+│       ├── drafts-store.mjs      # 草稿方案持久化
+│       ├── escape.mjs            # 逃生舱放行存储
+│       ├── evolution-ledger.mjs  # 派发决策台账（jsonl）+ 治理审计
+│       ├── evolution-summary.mjs # 聚合统计（按方案，能力/预算双轴）
+│       ├── evolution-advice.mjs  # 只读派发建议生成
+│       ├── adoption-tracker.mjs  # 子结果采纳判定跟踪（跨重启）
+│       ├── adoption-reminder.mjs # 采纳判定提醒生成
+│       ├── reminder-store.mjs    # 提醒存储 + 审计耦合记录
+│       ├── background-ledger.mjs # 后台任务台账（内存态，重启即失）
+│       ├── http-routes.mjs       # 设置回环 HTTP 路由
+│       ├── intersection.mjs      # 工具交集纯核心
+│       ├── presets-sync.mjs      # 内置预设自动安装（哈希门控同步）
+│       ├── profile-provider.mjs  # `profile` 子代理提供者
+│       ├── profile-directory.mjs # 只读方案目录（供模型参考）
+│       ├── profiles-store.mjs    # 方案注册表存储 + 开关持久化
 │       └── whitelist.mjs         # system-trust 预设白名单
-├── presets/orchestrator/         # 内置「编排者模式」agent 预设（自安装，每次启动同步）
-├── cordis.patch.yml              # bundle 补丁：把插件行插入宿主组成
-├── .gitea/workflows/ci.yml       # bare-CI（Gitea Actions；需服务器装 Act runner）
-├── package.json                  # 元数据、files 发布白名单、exports（test / test:bare / preflight scripts）
+├── presets/orchestrator/         # 内置「orchestrator」预设（自动安装，每次启动同步）
+├── cordis.patch.yml              # bundle patch：把插件行插入宿主组合
+├── .gitea/workflows/ci.yml       # bare-CI（Gitea Actions；需服务器上的 Act runner）
+├── package.json                  # 元数据、files 白名单、exports（test / test:bare / preflight 脚本）
 ├── scripts/
-│   ├── preflight.mjs             # preflight：preset 树对账 + 无硬编码版本徽章（零依赖）
-│   └── leak-scan.mjs             # 公开发布门禁：全历史 + 工作区敏感模式扫描
+│   ├── preflight.mjs             # 预检：预设树一致 + 无硬编码版本徽章（零依赖）
+│   └── leak-scan.mjs             # 公开发布门：扫描全历史与工作区的敏感模式
 ├── docs/
 │   └── screenshots/              # README 截图
-├── test/                         # 宿主侧自动化测试（node:test，零新增依赖；422 用例 = 27 bare 档 CI 跑 + 395 junction 档本机跑）
-│   ├── README.md / README.zh.md  # 测试目录说明（中英双语）——两档测试划分
-│   ├── harness/ctx.mjs           # 假宿主环境（fake ctx + ~/.dsh 隔离）
-│   ├── pure / input-schema / catalog-integrity.test.mjs   # bare 档（import-free，bare CI 可跑）
-│   └── *.test.mjs                # junction 档（仅本机）：characterization / facade / gating / persist / recycle /
+├── test/                         # 宿主侧测试（node:test，零额外依赖；438 用例）
+│   ├── README.md / README.zh.md  # 测试目录指南（中英）——两层拆分说明
+│   ├── harness/ctx.mjs           # 假 Cordis ctx + ~/.dsh 隔离
+│   ├── pure / input-schema / catalog-integrity.test.mjs   # bare 层（免导入，bare CI 可跑）
+│   └── *.test.mjs                # junction 层（仅本地）：characterization / facade / gating / persist / recycle /
 │                                 #   cost-guard / continuable-guard / decision-trace / dispatch-guard / escape-hatch /
 │                                 #   evolution-* / csrf / label-preset-sync / percall-spec / trust-label / audit-meta / …
-├── README.md / README.zh.md      # 本文档（中英双语）
+├── README.md / README.zh.md      # 本文档（英/中）
 └── LICENSE
 ```
 
 ## 贡献
 
-发现 Bug 或有新想法?欢迎[提 Issue](https://github.com/muzyLink/dsh-subagent-profile/issues)或提交 Pull Request,任何形式的贡献都欢迎。
+发现 bug 或有想法？[提交 issue](https://github.com/muzyLink/dsh-subagent-profile/issues) 或 PR——欢迎一切贡献。
 
-如果这个插件帮到了你,欢迎在 GitHub 上点个 ⭐,让更多人看到它。
+如果这个插件对你有用，请在 GitHub 上给个 ⭐——它帮助更多人发现它。
 
 ## 致谢
 
-内置的 `orchestrator` 编排者预设的构成方式参考了 [dsh-liangshen（梁神模式）](https://github.com/zhu1090093659/dsh-web-ui/tree/main/packages/dsh-liangshen)（出自 [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui)，Apache-2.0 许可）。感谢作者的出色工作。
+内置的 `orchestrator` 预设灵感来自 [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui) 的 [dsh-liangshen](https://github.com/zhu1090093659/dsh-web-ui/tree/main/packages/dsh-liangshen)（梁神模式），Apache-2.0 许可。感谢作者。
 
-## License
+## 许可
 
 [MIT](LICENSE) — Copyright (c) 2026 muzyLink

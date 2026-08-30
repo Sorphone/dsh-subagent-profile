@@ -16,6 +16,7 @@ import { createFailureLedger } from './lib/core/decision-trace.mjs';
 import { createEvolutionLedger } from './lib/core/evolution-ledger.mjs';
 import { createAdoptionTracker } from './lib/core/adoption-tracker.mjs';
 import { createReminderStore } from './lib/core/reminder-store.mjs';
+import { mintReminder, mintUnadoptedReminder } from './lib/core/adoption-reminder.mjs';
 import { createBackgroundLedger } from './lib/core/background-ledger.mjs';
 import { createDraftsStore } from './lib/core/drafts-store.mjs';
 import { assessDraftProfile } from './lib/core/draft-gates.mjs';
@@ -41,7 +42,7 @@ function syncBundledPresetsToHome(ctx) {
   }
 }
 
-// 卸载清理：本插件 3 个数据文件 + orchestrator 预设目录改名备份（S1：effect 清理器
+// 卸载清理：本插件 3 个数据文件 + orchestrator 预设目录改名备份（effect 清理器
 // 在禁用/热重载/退出时都可能触发，硬删除会静默丢用户数据）。备份保留可恢复副本；
 // 规范路径清空后重启按需重建。fail-soft：改名失败不抛。
 function removeOwnedData(home) {
@@ -70,19 +71,15 @@ function cleanRemovedBackups(home) {
   }
 }
 
-// parent_adopted 装配：tracker 工厂 + 根 ctx 订阅 session/event（按 session.id
-// 过滤），卸载退订并清理定时器。onDecision 经 getRefreshAdvice 延迟读取（先判定后聚合
-// 时为空操作）；onDecided 把「明确未采纳」逐条 mint P2 提醒。
-function setupAdoptionTracker(ctx, home, getRefreshAdvice, getReminderStore) {
+// parent_adopted 装配：tracker 工厂 + 根 ctx 订阅 session/event（按 session.id 过滤），
+// 卸载退订并清理定时器。onDecision 经 getRefreshAdvice 延迟读取（先判定后聚合时为空
+// 操作）；onDecided 把「明确未采纳」转成提醒中心条目（同源审计 + 注意级提醒）。
+function setupAdoptionTracker(ctx, home, getRefreshAdvice, onUnadopted) {
   const adoptionTracker = createAdoptionTracker({
     stateFile: join(home, 'subagent-evolution', 'adopted-state.json'),
     warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`),
     onDecision: () => { try { getRefreshAdvice()(); } catch { /* 聚合重算失败不影响判定（fail-soft） */ } },
-    onDecided: (rec) => {
-      try {
-        getReminderStore()?.record({ severity: 'P2', kind: 'adoption-false', title: '派发结果未被采纳', detail: '该次派发的结果在判定窗口内未被父会话采纳', sessionId: rec.parentSessionId });
-      } catch { /* 提醒 mint 失败不影响判定 */ }
-    },
+    onDecided: onUnadopted,
   });
   const onSessionEvent = (session, event) => adoptionTracker.handleEvent(session, event);
   ctx.on('session/event', onSessionEvent);
@@ -91,7 +88,7 @@ function setupAdoptionTracker(ctx, home, getRefreshAdvice, getReminderStore) {
 }
 
 // 卸载接线：注销工具 + 清空台账 + 级联取消 + 删数据文件与预设目录。agent/disposed
-// 挂钩按父释放并发/token 记账，并把该父会话未决采纳判定判「明确未采纳」（E-1）。
+// 挂钩按父释放并发/token 记账，并把该父会话未决采纳判定判「明确未采纳」。
 function registerTeardown(ctx, dispatch, ledger, guard, home, backgroundLedger, adoptionTracker) {
   ctx.effect(() => dispatch.dispose);
   ctx.effect(() => ledger.clear);
@@ -222,7 +219,7 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
     order: 117,
     text: (context) => (gate(context) ? ORCHESTRATOR_MODE_TEXT : ''),
   });
-  // 只读建议段：门控 = orchestrator + evolutionAdvice 开关；异常兜底不阻断装配。
+  // 派发优化建议段：门控 = orchestrator + evolutionAdvice 开关；异常兜底不阻断装配。
   pluginSystemPrompt.section({
     name: 'evolution:advice',
     order: 116.8,
@@ -231,11 +228,11 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
       try {
         return buildAdviceText(adviceEnv);
       } catch (error) {
-        // F4：候选校验失败（如逃生舱放行的非 system 预设）不再静默空转——logger.warn
+        // 候选校验失败（如逃生舱放行的非 system 预设）不再静默空转——logger.warn
         // 留痕 + 注入段标注「建议暂不可用及原因」，父 Agent 可见、派发行为不受影响。
         const reason = error instanceof Error ? error.message : String(error);
         adviceEnv.logger.warn(`[dsh-subagent-profile] evolution:advice 生成失败：${reason}`);
-        return `（只读建议暂不可用：${reason}。派发行为不受影响。）`;
+        return `（派发优化建议暂不可用：${reason}。派发行为不受影响。）`;
       }
     },
   });
@@ -313,7 +310,7 @@ function readPluginVersion() {
 
 // 逃生舱装配：放行集 store + 开关态（state.json 持久化）+ 访问器。开关态经对象字段
 // 可变（/set-escape 改写），getEscapeSet 开关关时恒空数组（零叠加、零放行审计）。
-// 放行时 mint P1 提醒（Task 42：高可见治理事件，与放行审计同源留痕）。
+// 放行时 mint P0（紧急）提醒（高可见治理事件，与放行审计同源留痕）。
 function setupEscape(ctx, store, evoLedger, home, getReminderStore) {
   const escape = createEscapeStore({ dshHome: home, logger: ctx.logger, onGovernanceFailure: () => evoLedger.markGovernanceFailure() });
   const state = { escapeEnabled: store.loadEscapeEnabled() };
@@ -324,7 +321,7 @@ function setupEscape(ctx, store, evoLedger, home, getReminderStore) {
     setEscapeEnabled: (next) => { state.escapeEnabled = next; },
     recordEscapeAllowProvider: (parent, preset) => {
       recordEscapeAllowProvider(evoLedger, parent, preset);
-      mintReminder(getReminderStore(), { severity: 'P1', kind: 'escape-allow', title: '逃生舱放行', detail: '非官方预设 "' + preset + '" 经逃生舱放行（其余安全检查仍全量生效）', sessionId: parent?.session?.header?.id });
+      mintReminder(getReminderStore(), { severity: 'P0', kind: 'escape-allow', title: '逃生舱放行非官方预设', detail: '预设 "' + preset + '" 经逃生舱放行，其余安全检查仍全量生效', sessionId: parent?.session?.header?.id });
     },
   };
 }
@@ -350,7 +347,7 @@ function createDispatch(ctx, store, catalog, ledger, guard, evoLedger, backgroun
   });
 }
 
-// auto-profile S1 落库：三道安全检查评估（draft-gates）→ 任一 fail 即 throw → 落库 + 审计。
+// auto-profile 落库：三道安全检查评估（draft-gates）→ 任一 fail 即 throw → 落库 + 审计。
 async function applyDraftProfile({ ctx, store, catalog, getEscapeSet, evoLedger, draft }) {
   const { ok, checks, clean } = await assessDraftProfile({ ctx, store, catalog, getEscapeSet, draft });
   if (!ok) {
@@ -363,18 +360,13 @@ async function applyDraftProfile({ ctx, store, catalog, getEscapeSet, evoLedger,
   return { id: clean.id, persisted: persisted.persisted };
 }
 
-// 提醒 mint 统一入口（Task 42）：store 未就绪/失败一律吞掉，绝不阻断治理路径。
-function mintReminder(store, entry) {
-  try { if (store !== undefined) store.record(entry); } catch { /* 提醒 mint 失败不影响治理路径（fail-soft） */ }
-}
-
 export async function apply(ctx) {
   const home = dshHome();
-  cleanRemovedBackups(home); // 上个生命周期留下的 .removed-* 备份残留（S1）。
+  cleanRemovedBackups(home); // 上个生命周期留下的 .removed-* 备份残留。
   // reminderStore 变量提前声明：evoLedger.onAlert 与 escape mint 钩子延迟读取。
   let reminderStore;
   // 派发台账 + 审计分级须在 store 之前构造：store 的治理审计钩子指向其 markGovernanceFailure。
-  const evoLedger = createEvolutionLedger({ dshHome: home, pluginVersion: readPluginVersion(), warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`), onAlert: (lost) => mintReminder(reminderStore, { severity: 'P0', kind: 'audit-degraded', title: '审计降级（P0）', detail: '治理审计丢失 ' + lost + ' 条，health 已降级 degraded——请检查磁盘', sessionId: null }) });
+  const evoLedger = createEvolutionLedger({ dshHome: home, pluginVersion: readPluginVersion(), warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`), onAlert: (lost) => mintReminder(reminderStore, { severity: 'P0', kind: 'audit-degraded', title: '审计降级', detail: '治理审计丢失 ' + lost + ' 条，健康状态已降级——请检查磁盘', sessionId: null }) });
   const store = createProfileStore({ dshHome: home, logger: ctx.logger, onGovernanceFailure: () => evoLedger.markGovernanceFailure() });
   const escapeCtl = setupEscape(ctx, store, evoLedger, home, () => reminderStore);
   let enabled = store.loadEnabled();
@@ -389,7 +381,7 @@ export async function apply(ctx) {
   const draftsStore = createDraftsStore({ dshHome: home, onGovernanceFailure: () => evoLedger.markGovernanceFailure() });
   reminderStore = createReminderStore({ dshHome: home, audit: (entry) => evoLedger.recordGovernanceAudit(entry), warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
   let refreshAdvice = () => {};
-  const adoptionTracker = setupAdoptionTracker(ctx, home, () => refreshAdvice, () => reminderStore);
+  const adoptionTracker = setupAdoptionTracker(ctx, home, () => refreshAdvice, (rec) => mintUnadoptedReminder(reminderStore, evoLedger, rec));
   const dispatch = createDispatch(ctx, store, catalog, ledger, guard, evoLedger, backgroundLedger, adoptionTracker, escapeCtl.getEscapeSet, () => enabled, () => evolutionAdvice);
   provideProfileService(ctx, store);
   const adviceWhitelist = await resolveAdviceWhitelist(ctx);

@@ -43,6 +43,21 @@ test('background ledger：超上限丢弃最旧，clear 清空', () => {
   assert.deepEqual(ledger.get('s1'), []);
 });
 
+test('background ledger：结算摘要保留 childSessionId，recordChild 结算前补记', () => {
+  const ledger = createBackgroundLedger();
+  ledger.recordChild('s1', 'job1', 'child-1');
+  ledger.recordChild('s1', 'job1', 'child-1');
+  const pending = ledger.get('s1');
+  assert.equal(pending.length, 1, '重复补记不得新增条目');
+  assert.equal(pending[0].childSessionId, 'child-1');
+  assert.equal(pending[0].settled, undefined, '未结算条目不得虚构 settled');
+  ledger.record('s1', 'job1', { status: 'completed', stopReason: 'completed', childSessionId: 'child-1', output: 'x' });
+  const settled = ledger.get('s1')[0];
+  assert.equal(settled.childSessionId, 'child-1');
+  assert.equal(settled.settled.childSessionId, 'child-1', '结算摘要必须保留子会话 id');
+  assert.equal(settled.settled.output, undefined, '仍不存子输出正文');
+});
+
 test('GET /ledger/jobs：未知 session 返回空数组', async () => {
   const iso = makeIsolatedDshHome();
   try {

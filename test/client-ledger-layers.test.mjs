@@ -88,3 +88,16 @@ test('批次 7：用户可见文案零内部术语（五环/认知/感知/请求
   assert.match(source, /查看完整因果链/);
   assert.match(source, /由父会话派发/);
 });
+
+test('台账「任务指令（派发前）」数据源：prompt 摘要同源，旧记录无摘要不渲染', () => {
+  const body = functionBody('buildStartBlock');
+  assert.match(body, /prompt_excerpt/, '必须取 trace.requested 的 prompt 摘要');
+  assert.match(body, /promptExcerpt !== ''/, '无摘要时必须不渲染该行');
+  assert.doesNotMatch(body, /parentText\.before/, '不得用派发前父文本冒充任务指令');
+});
+
+test('派发决策台账术语：会话页标签与设置页指路文案一致', () => {
+  assert.match(source, /ledgerTab: '派发决策台账'/);
+  assert.match(source, /各会话的成本明细见会话页「派发决策台账」/);
+  assert.doesNotMatch(source, /各会话的成本明细见会话页「决策台账」/);
+});

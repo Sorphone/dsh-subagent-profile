@@ -40,8 +40,11 @@ test('批次 7 用词规范：index.mjs 用户可见文案零内部词（逃生�
   assert.ok(host.includes('其余安全检查仍全量生效'), '逃生舱提醒必须用「安全检查」');
 });
 
-test('host 侧提醒详情：人话文案且不再携带方案键/模式标识', () => {
+test('host 侧未采纳事件：审计 + 注意级提醒同源 mint（条目补全）', () => {
   const host = readFileSync(fileURLToPath(new URL('../index.mjs', import.meta.url)), 'utf8');
-  assert.ok(host.includes("detail: '该次派发的结果在判定窗口内未被父会话采纳'"), '提醒详情必须使用人话文案');
-  assert.ok(!host.includes('reminderDetailText('), '提醒 mint 不再拼接方案键/模式技术词');
+  const reminderMod = readFileSync(fileURLToPath(new URL('../lib/core/adoption-reminder.mjs', import.meta.url)), 'utf8');
+  assert.ok(host.includes('mintUnadoptedReminder'), '未采纳判定必须接入提醒 mint');
+  assert.ok(reminderMod.includes("kind: 'adoption-false'"), '未采纳事件必须写治理审计');
+  assert.ok(reminderMod.includes("title: '派发结果未被采纳'"), '未采纳事件必须 mint 提醒条目');
+  assert.ok(reminderMod.includes('父 Agent 未采用该结果'), '提醒说明必须人话可读');
 });

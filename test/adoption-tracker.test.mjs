@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAdoptionTracker } from '../lib/core/adoption-tracker.mjs';
@@ -181,4 +181,50 @@ test('apply 接线：根 ctx 订阅 session/event，agent/disposed 触发采纳�
     assert.doesNotThrow(() => sessionEvent.callback({ id: 'sx' }, { type: 'turn/end', seq: 1, data: { turn: 1 } }));
     assert.doesNotThrow(() => agentDisposed.callback({ agent: { session: { header: { id: 'sx' } } } }));
   } finally { iso.restore(); iso.teardown(); }
+});
+
+test('未采纳提醒数据源：prompt 摘要/模型/结算摘要随记录携带并重启保留', () => {
+  const { dir, evoDir } = tmpEvoDir();
+  try {
+    const stateFile = join(evoDir, 'adopted-state.json');
+    const tracker = createAdoptionTracker({ stateFile, windowN: 2, windowMs: null, now: () => 1000 });
+    tracker.register({
+      parentSessionId: 's1',
+      id: 'c1',
+      ledgerKey: LEDGER_KEY,
+      mode: 'foreground',
+      dispatchedAt: 0,
+      promptExcerpt: '整理三份访谈记录并输出结论'.padEnd(200, 'x').slice(0, 200),
+      requestedModel: 'deepseek-v4-flash',
+      parentModel: 'deepseek-v4-pro',
+    });
+    tracker.updateSettled('s1', 'c1', {
+      stopReason: 'completed',
+      elapsedMs: 5500,
+      childTotalTokens: 123,
+      childUsage: { inputTokens: 1, outputTokens: 2 },
+      calls: { calls: [], totalCalls: 0 },
+      output: '子输出正文不得进入侧车',
+      childSessionId: 'c1',
+    });
+    tracker.handleEvent({ id: 's1' }, anchorEvent(1, 's1', 'foreground', 'c1'));
+    tracker.handleEvent({ id: 's1' }, { type: 'turn/end', seq: 2, data: { turn: 1 } });
+    tracker.handleEvent({ id: 's1' }, { type: 'turn/end', seq: 3, data: { turn: 2 } });
+    assert.equal(tracker.statusOf('s1', 'c1', 1000), 'false', '窗口到期必须判未采纳');
+    // 重启后记录仍携带展示字段，结算摘要只保留结果行需要的结构字段。
+    const tracker2 = createAdoptionTracker({ stateFile, windowN: 2, windowMs: null, now: () => 1000 });
+    assert.equal(tracker2.statusOf('s1', 'c1', 1000), 'false', '重启后未采纳判定保留');
+    const persisted = JSON.parse(readFileSync(stateFile, 'utf8'));
+    const rec = persisted.records.find((r) => r.parentSessionId === 's1' && r.id === 'c1');
+    assert.ok(rec !== undefined);
+    assert.equal(rec.promptExcerpt.length, 200, 'prompt 摘要必须保留且截断 200 字符');
+    assert.equal(rec.requestedModel, 'deepseek-v4-flash');
+    assert.equal(rec.parentModel, 'deepseek-v4-pro');
+    assert.equal(rec.childSessionId, 'c1');
+    assert.equal(rec.settled.stopReason, 'completed');
+    assert.equal(rec.settled.elapsedMs, 5500);
+    assert.equal(rec.settled.childUsage.outputTokens, 2);
+    assert.equal(rec.settled.calls, undefined, 'calls 不进入侧车（结果行不需要）');
+    assert.equal(rec.settled.output, undefined, '子输出正文绝不落盘');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

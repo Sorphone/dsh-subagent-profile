@@ -60,3 +60,18 @@ test('BP-05：continuable 无「执行中→完成」虚报（启动即终态，
   const body = functionBody('useBackgroundJobPoll');
   assert.match(body, /runInBackground !== true/, '非后台派发不启动轮询');
 });
+
+test('台账 tab 后台任务 live 结算：3 秒轮询、仅未结算后台启动、配对即停', () => {
+  const poll = functionBody('startLedgerJobsPoll');
+  assert.match(poll, /fetchLedgerJobs/, '轮询必须复用 /ledger/jobs 拉取');
+  assert.match(poll, /attempts >= 100/, '轮询必须有 100 次上限');
+  assert.match(poll, /setInterval\(/, '有定时轮询');
+  assert.match(poll, /3000\)/, '轮询间隔 3 秒');
+  assert.match(poll, /allJobsSettled/, '待配对 job 全部结算即停');
+  assert.match(poll, /clearInterval/, '停止/卸载必须清理定时器');
+  const hook = functionBody('useLedgerJobs');
+  assert.match(hook, /startLedgerJobsPoll/, '台账数据装载必须接轮询 hook');
+  const pending = functionBody('pendingBackgroundJobIds');
+  assert.match(pending, /execution\.kind !== 'background'/, '非后台记录不启动轮询');
+  assert.match(pending, /trace\.settled !== null/, '已结算记录不启动轮询');
+});

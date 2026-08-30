@@ -11,8 +11,8 @@
 
 | 档位 | 文件 | 用例数 | 理由 |
 |---|---|---|---|
-| **bare**（`npm run test:bare`） | `pure` / `input-schema` / `catalog-integrity` | 26 | 仅静态 import `lib/core/pure.mjs` / `catalog.mjs`——import-free、无 junction，裸 CI 可跑。 |
-| **junction**（仅本机） | 除 bare 三文件（`pure` / `input-schema` / `catalog-integrity`）外的全部 `test/*.test.mjs` | 380 | 体内动态 `await import('../index.mjs')` 或 `../lib/core/shims.mjs` → 加载 `@deepseek-ai`，需要装有 `@deepseek-ai` 的 junction 宿主；本机 `npm test` / `node --test "test/**/*.test.mjs"` 全量 407 用例。 |
+| **bare**（`npm run test:bare`） | `pure` / `input-schema` / `catalog-integrity` | 27 | 仅静态 import `lib/core/pure.mjs` / `catalog.mjs`——import-free、无 junction，裸 CI 可跑。 |
+| **junction**（仅本机） | 除 bare 三文件（`pure` / `input-schema` / `catalog-integrity`）外的全部 `test/*.test.mjs` | 402 | 体内动态 `await import('../index.mjs')` 或 `../lib/core/shims.mjs` → 加载 `@deepseek-ai`，需要装有 `@deepseek-ai` 的 junction 宿主；本机 `npm test` / `node --test "test/**/*.test.mjs"` 全量 429 用例。 |
 
 注意：模块 import-free ≠ 测试 bare。`cost-guard` / `persist` / `recycle` 单测的模块本身
 import-free，但测试体内仍动态 import `index.mjs`，所以仍是 junction。分档以**测试文件的实际
