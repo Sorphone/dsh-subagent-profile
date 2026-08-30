@@ -17,13 +17,18 @@ import { join } from 'node:path';
 import {
   computeSummaries,
   parseDispatchRecords,
-  readSummaries,
-  refreshSummaries,
   writeSummaries,
   weightedSuccess,
   adoptStatus,
   confidenceLevel,
 } from '../lib/core/evolution-summary.mjs';
+import {
+  computeAdvice,
+  buildAdviceText,
+  readSummaries,
+  refreshSummaries,
+  suggestAdvice,
+} from '../lib/core/evolution-advice.mjs';
 
 // --- fixture：与 evolution-ledger 记录 schema 一致 ----------------------------------
 
@@ -305,5 +310,163 @@ test('readSummaries：v=1 正常读取；损坏/形状不符 fail-soft 返回 nu
     // 形状不符（无 l1）→ null。
     writeFileSync(file, JSON.stringify({ v: 1 }), 'utf8');
     assert.equal(readSummaries(file), null);
+  } finally { t.cleanup(); }
+});
+
+test('computeAdvice：从 summaries 产出结构化建议 + 全局汇总', () => {
+  const t = tmpDir();
+  try {
+    const file = join(t.dir, 'summaries.json');
+    const l1 = {
+      'preset:standard|model:m1': {
+        deployments_total: 4,
+        outcome: { completed: 2, failed: 2, killed: 0 },
+        score: { weighted_success: 0.5, win_rate: 0.5 },
+        perf: { avg_elapsed_ms: 100, avg_output_len: 200, avg_tool_count: 3 },
+        confidence: { n: 4, min_n_required: 3, level: 'medium' },
+        cooldown: { until_ts: null, last_apply_ts: null },
+      },
+    };
+    writeFileSync(file, JSON.stringify({ v: 1, l1, l2: {} }), 'utf8');
+    const { advice, global, produced } = computeAdvice({ summariesFile: file, whitelist: new Set(['standard']), logger: { warn: () => {} } });
+    assert.equal(advice.length, 1);
+    assert.equal(advice[0].profileKey, 'preset:standard|model:m1');
+    assert.equal(advice[0].suggestion, '降');
+    assert.equal(advice[0].confidence, 'medium');
+    assert.equal(global.total, 4);
+    assert.equal(global.completed, 2);
+    assert.equal(global.failed, 2);
+    assert.equal(produced.length, 1);
+    assert.equal(produced[0][0], 'preset:standard|model:m1');
+  } finally { t.cleanup(); }
+});
+
+test('computeAdvice：无 summaries → 空建议 + 空全局', () => {
+  const t = tmpDir();
+  try {
+    const { advice, global } = computeAdvice({ summariesFile: join(t.dir, 'missing.json'), whitelist: new Set(['standard']), logger: { warn: () => {} } });
+    assert.deepEqual(advice, []);
+    assert.equal(global.total, 0);
+  } finally { t.cleanup(); }
+});
+
+// --- L1 键去 effort（聚合语义修正，2026-08 任务书批次 2 断线二）------------------
+
+test('computeSummaries：同一 profile 不同 effort 聚合为一条 L1（effort 不混入身份键）', () => {
+  const records = [
+    { effective: { preset: 'standard', provider: 'p1', model: 'm1', reasoningEffort: 'medium' }, outcome: { status: 'completed' } },
+    { effective: { preset: 'standard', provider: 'p1', model: 'm1', reasoningEffort: 'high' }, outcome: { status: 'failed' } },
+  ];
+  const { l1, l2 } = computeSummaries(records);
+  const key = 'preset:standard|provider:p1|model:m1';
+  assert.ok(l1[key], '同一方案不同 effort 必须聚合为一条 L1');
+  assert.equal(l1[key].deployments_total, 2);
+  assert.equal(l1[key].axes.capability, true);
+  assert.equal(l1[key].axes.budget, true);
+  // effort 只留在 L2 预算轴。
+  assert.ok(l2[key + ':reasoningEffort:medium']);
+  assert.ok(l2[key + ':reasoningEffort:high']);
+  assert.ok(!l1[key + '|effort:medium'], 'effort 不得出现在 L1 键');
+  assert.ok(!l1[key + '|effort:high'], 'effort 不得出现在 L1 键');
+});
+
+test('computeSummaries：纯 effort 配置聚合为 (inline)，预算轴可产出「升」建议', () => {
+  const records = [
+    { effective: { reasoningEffort: 'high' }, outcome: { status: 'completed' } },
+    { effective: { reasoningEffort: 'high' }, outcome: { status: 'failed' } },
+    { effective: { reasoningEffort: 'high' }, outcome: { status: 'failed' } },
+  ];
+  const { l1 } = computeSummaries(records);
+  const group = l1['(inline)'];
+  assert.ok(group, '纯 effort 配置落 (inline) 键');
+  assert.equal(group.deployments_total, 3);
+  assert.equal(group.axes.capability, false, '纯 effort 组无能力轴');
+  assert.equal(group.axes.budget, true, '纯 effort 组有预算轴');
+  const advice = suggestAdvice({ l1Entry: group, profileKey: '(inline)', now: 1000 });
+  assert.ok(advice, '欠佳纯 effort 组应产出建议');
+  assert.equal(advice.suggestion, '升', '预算轴升建议必须可达（axes 判定，而非键文本）');
+});
+
+test('suggestAdvice：legacy summaries（无 axes 字段）回退键文本判定', () => {
+  // 旧 summaries.json 无 axes：effort 键文本仍有预算轴语义（升），inline 维持平。
+  const legacyEntry = {
+    deployments_total: 3,
+    outcome: { completed: 1, failed: 2, killed: 0 },
+    score: { weighted_success: 0.333, win_rate: 0.333 },
+    perf: { avg_elapsed_ms: 150, avg_output_len: 500, avg_tool_count: 2 },
+    confidence: { n: 3, min_n_required: 3, level: 'medium' },
+    cooldown: { until_ts: null, last_apply_ts: null },
+  };
+  const legacyBudget = suggestAdvice({ l1Entry: legacyEntry, profileKey: 'effort:off', now: 1000 });
+  assert.equal(legacyBudget.suggestion, '升');
+  const legacyInline = suggestAdvice({ l1Entry: legacyEntry, profileKey: '(inline)', now: 1000 });
+  assert.equal(legacyInline.suggestion, '平');
+});
+
+// --- F6：summaries.json 版本不符/损坏 → fail-soft 重建 ---------------------------------
+
+test('computeAdvice：summaries.json 版本不符 → fail-soft 重建并产出建议（F6）', () => {
+  const t = tmpDir();
+  try {
+    const evoDir = join(t.dir, 'subagent-evolution');
+    mkdirSync(evoDir, { recursive: true });
+    const dispatchFile = join(evoDir, 'dispatch.jsonl');
+    const summariesFile = join(evoDir, 'summaries.json');
+    // 台账：3 条欠佳标准 profile 记录（1 完成 2 失败 → 建议产出）。
+    const base = { effective: { preset: 'standard', provider: 'p1', model: 'm1' } };
+    writeFileSync(dispatchFile, [
+      JSON.stringify({ ...base, outcome: { status: 'completed' } }),
+      JSON.stringify({ ...base, outcome: { status: 'failed' } }),
+      JSON.stringify({ ...base, outcome: { status: 'failed' } }),
+    ].join('\n') + '\n', 'utf8');
+    // 未知版本资产：必须被重建而非静默跳过。
+    writeFileSync(summariesFile, JSON.stringify({ v: 2, l1: { bogus: { deployments_total: 99 } }, l2: {} }), 'utf8');
+    const warns = [];
+    const { advice, global } = computeAdvice({ summariesFile, dispatchFile, whitelist: new Set(['standard']), logger: { warn: (m) => warns.push(m) } });
+    assert.equal(advice.length, 1, '重建后必须产出建议');
+    assert.equal(advice[0].suggestion, '降');
+    assert.equal(global.total, 3);
+    const parsed = JSON.parse(readFileSync(summariesFile, 'utf8'));
+    assert.equal(parsed.v, 1, '重建必须写回 v:1');
+    assert.ok(warns.some((m) => m.includes('版本')), '版本不符必须告警留痕');
+  } finally { t.cleanup(); }
+});
+
+test('computeAdvice：summaries.json 损坏 → fail-soft 重建（F6）', () => {
+  const t = tmpDir();
+  try {
+    const evoDir = join(t.dir, 'subagent-evolution');
+    mkdirSync(evoDir, { recursive: true });
+    const dispatchFile = join(evoDir, 'dispatch.jsonl');
+    const summariesFile = join(evoDir, 'summaries.json');
+    writeFileSync(dispatchFile, JSON.stringify({ effective: { preset: 'standard' }, outcome: { status: 'completed' } }) + '\n', 'utf8');
+    writeFileSync(summariesFile, '{broken json', 'utf8');
+    const { advice } = computeAdvice({ summariesFile, dispatchFile, whitelist: new Set(['standard']), logger: { warn: () => {} } });
+    assert.deepEqual(advice, [], 'N<3 重建后不产出建议但不得报错');
+    const parsed = JSON.parse(readFileSync(summariesFile, 'utf8'));
+    assert.equal(parsed.v, 1, '损坏资产必须被重建为 v:1');
+  } finally { t.cleanup(); }
+});
+
+test('buildAdviceText：复用 computeAdvice 并写回 cooldown', () => {
+  const t = tmpDir();
+  try {
+    const file = join(t.dir, 'summaries.json');
+    const l1 = {
+      'preset:standard|model:m1': {
+        deployments_total: 4,
+        outcome: { completed: 2, failed: 2, killed: 0 },
+        score: { weighted_success: 0.5, win_rate: 0.5 },
+        perf: { avg_elapsed_ms: 100, avg_output_len: 200, avg_tool_count: 3 },
+        confidence: { n: 4, min_n_required: 3, level: 'medium' },
+        cooldown: { until_ts: null, last_apply_ts: null },
+      },
+    };
+    writeFileSync(file, JSON.stringify({ v: 1, l1, l2: {} }), 'utf8');
+    const text = buildAdviceText({ summariesFile: file, whitelist: new Set(['standard']), logger: { warn: () => {} } });
+    assert.match(text, /累计 4 次/);
+    assert.match(text, /preset:standard|model:m1/);
+    const parsed = JSON.parse(readFileSync(file, 'utf8'));
+    assert.ok(parsed.l1['preset:standard|model:m1'].cooldown.until_ts > Date.now() - 1000);
   } finally { t.cleanup(); }
 });

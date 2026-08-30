@@ -180,7 +180,7 @@ test('execute foreground completed：dispatch.jsonl 追加一条含全 schema �
     assert.equal(record.origin, 'subagent');
     assert.equal(record.source, 'system');
     assert.match(record.provenance, /^dispatch:v\d/);
-    assert.equal(record.plugin_version, '0.3.2');
+    assert.equal(record.plugin_version, '0.3.4');
     assert.equal(typeof record.ts, 'number');
     // 结构指纹不含 prompt 原文。
     assert.equal(typeof record.task.len, 'number');

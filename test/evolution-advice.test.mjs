@@ -1,4 +1,4 @@
-// test/evolution-advice.test.mjs — 只读建议注入（evolution:advice，默认关）。
+// test/evolution-advice.test.mjs — 派发优化建议注入（evolution:advice，默认关）。
 //   纯函数 suggestAdvice（四条件 + 升/降轴硬规则 + cooldown）+ 非 system 候选
 //   fail-loud + 注入段门控（开关/编排者）+ POST /set-evolution-advice 路由。
 // 纯函数段直接 import evolution-summary.mjs（无 index 依赖）；门控/路由段动态
@@ -12,7 +12,7 @@ import {
   suggestAdvice,
   presetFromKey,
   assertSystemCandidate,
-} from '../lib/core/evolution-summary.mjs';
+} from '../lib/core/evolution-advice.mjs';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
 import { makeRouteHarness, callRoute } from './harness/routes.mjs';
 
@@ -172,17 +172,19 @@ test('advice section: orchestrator + 开关开 + 欠佳 profile → 注入仅含
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('advice section: 非 system 候选出现在建议生成路径 → warn 留痕且不注入（不炸提示装配）', async () => {
+test('advice section: 非 system 候选出现在建议生成路径 → warn 留痕 + 注入可见标注（F4 不再静默）', async () => {
   const iso = makeIsolatedDshHome();
   try {
     writeSummariesFixture(iso.dir, { 'preset:custom': underperformingEntry() });
     const { routes, records } = await setupApp({ agentPresets: ORCHESTRATOR_STUB });
     await postAdvice(routes, true);
     const advice = records.sectionCalls.find((s) => s.name === 'evolution:advice');
-    // 兜底行为：text 回调不抛（fail-loud 语义经 warn 日志留痕），注入为空——
-    // 损坏/手改的 summaries 不得让 orchestrator 每请求提示装配失败。
+    // F4：text 回调不抛；候选校验失败（如逃生舱放行的非 system 预设）不再静默
+    // 空转——warn 留痕 + 注入段标注「建议暂不可用及原因」。
     const text = advice.text({ agent: { ctx: {} } });
-    assert.equal(text, '', '非 system 候选时不注入');
+    assert.match(text, /派发优化建议暂不可用/, '候选校验失败必须注入可见标注');
+    assert.match(text, /system-trust 白名单/, '标注必须携带失败原因');
+    assert.match(text, /派发行为不受影响/, '标注必须声明不影响派发行为');
     assert.ok(records.logs.warn.some((args) => String(args).includes('system-trust 白名单')), 'warn 留痕 fail-loud 语义');
   } finally { iso.restore(); iso.teardown(); }
 });
