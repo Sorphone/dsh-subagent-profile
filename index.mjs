@@ -24,6 +24,7 @@ import { createEscapeStore, recordEscapeAllowProvider } from './lib/core/escape.
 import { resolveWhitelist, FALLBACK_WHITELIST } from './lib/core/whitelist.mjs';
 import { profileDirectoryRows, profileStatsFromSummaries, applyProfileStats } from './lib/core/profile-directory.mjs';
 import { buildAdviceText, refreshSummaries, readSummaries } from './lib/core/evolution-advice.mjs';
+import { createEvolutionAssembly } from './lib/core/evolution-engine.mjs';
 
 export const name = 'dsh-subagent-profile';
 export const inject = ['subagents', 'tools', 'agents'];
@@ -198,6 +199,13 @@ async function resolveAdviceWhitelist(ctx) {
   }
 }
 
+async function setupEvolution(ctx, home, store, catalog, evoLedger) {
+  const adviceWhitelist = await resolveAdviceWhitelist(ctx);
+  const adviceEnv = { summariesFile: join(home, 'subagent-evolution', 'summaries.json'), dispatchFile: join(home, 'subagent-evolution', 'dispatch.jsonl'), whitelist: adviceWhitelist, logger: ctx.logger };
+  const { adviceSource, evolution } = createEvolutionAssembly({ ctx, home, store, catalog, evoLedger, adviceWhitelist, pluginVersion: readPluginVersion() });
+  return { adviceEnv, adviceSource, evolution };
+}
+
 // 系统提示各 section：门控经 sectionGatePasses；`enabled` 经 getter 实时读取。
 function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice, adviceEnv, guard) {
   const pluginSystemPrompt = ctx.get('systemPrompt');
@@ -255,7 +263,7 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
 // webServer 可选——无头部署保留 dispatch 工具、只丢设置页。webServer 的激活
 // （listen）是异步的，可能晚于本插件 inject 依赖解析完成，故在等它的 inject
 // 子 scope 内注册（apply 时 ctx.get 会读到 undefined）。
-function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, backgroundLedger, draftsStore, applyDraft, getAudit, getEvolutionAdvice, setEvolutionAdvice, getEscapeEnabled, setEscapeEnabled, escape, refreshAdvice, summariesFile, dispatchFile, adviceWhitelist, previewDraft, reminderStore) {
+function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, catalog, ledger, backgroundLedger, draftsStore, applyDraft, getAudit, getEvolutionAdvice, setEvolutionAdvice, getEscapeEnabled, setEscapeEnabled, escape, refreshAdvice, summariesFile, dispatchFile, adviceWhitelist, previewDraft, reminderStore, adviceSource, evolution) {
   ctx.inject(['webServer'], (scope) => {
     scope.effect(createHttpRoutes({
       webServer: scope.webServer,
@@ -280,6 +288,8 @@ function registerSettingsRoutes(ctx, store, getEnabled, setEnabled, syncTool, ca
       adviceWhitelist,
       previewDraft,
       reminderStore,
+      adviceSource,
+      evolution,
       logger: ctx.logger,
     }), 'dsh-subagent-profile: settings routes');
   });
@@ -384,8 +394,7 @@ export async function apply(ctx) {
   const adoptionTracker = setupAdoptionTracker(ctx, home, () => refreshAdvice, (rec) => mintUnadoptedReminder(reminderStore, evoLedger, rec));
   const dispatch = createDispatch(ctx, store, catalog, ledger, guard, evoLedger, backgroundLedger, adoptionTracker, escapeCtl.getEscapeSet, () => enabled, () => evolutionAdvice);
   provideProfileService(ctx, store);
-  const adviceWhitelist = await resolveAdviceWhitelist(ctx);
-  const adviceEnv = { summariesFile: join(home, 'subagent-evolution', 'summaries.json'), dispatchFile: join(home, 'subagent-evolution', 'dispatch.jsonl'), whitelist: adviceWhitelist, logger: ctx.logger };
+  const { adviceEnv, adviceSource, evolution } = await setupEvolution(ctx, home, store, catalog, evoLedger);
   // 生产聚合触发点（T1 修复）：/options/refresh 与 /list 触发的惰性重算；parent_adopted
   // 的「已确认未采纳」计数经 opts 惰性 join 进 weighted_success（-0.3 惩罚）。
   refreshAdvice = () => refreshSummaries({ dispatchFile: adviceEnv.dispatchFile, summariesFile: adviceEnv.summariesFile, logger: ctx.logger, opts: { parentAdoptedConfirmedFalse: adoptionTracker.confirmedFalseCounts() } });
@@ -407,6 +416,6 @@ export async function apply(ctx) {
     },
   });
   // Client 设置 UI 的 HTTP loopback 路由 —— lib/core/http-routes.mjs。
-  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, backgroundLedger, draftsStore, applyDraft, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice, join(home, 'subagent-evolution', 'summaries.json'), adviceEnv.dispatchFile, adviceEnv.whitelist, previewDraft, reminderStore);
+  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, backgroundLedger, draftsStore, applyDraft, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice, join(home, 'subagent-evolution', 'summaries.json'), adviceEnv.dispatchFile, adviceEnv.whitelist, previewDraft, reminderStore, adviceSource, evolution);
   registerTeardown(ctx, dispatch, ledger, guard, home, backgroundLedger, adoptionTracker);
 }

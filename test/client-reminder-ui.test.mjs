@@ -105,11 +105,31 @@ test('提醒分层空态：全空显示空态文案，仅剩已处理时显示�
   assert.match(body, /\[pendingList, handledList\]/, '有内容时必须同时渲染默认列表与折叠区');
 });
 
-test('P0 提醒行按钮收敛：仅标记已读；关闭按钮仅 P1/P2 渲染', () => {
+test('P0 提醒行按钮：未读仅标记已读（无关闭），已读后出现关闭', () => {
   const row = functionBody('buildReminderRow');
-  assert.match(row, /r\.severity !== 'P0'/, '关闭按钮必须以非 P0 为渲染条件');
-  assert.match(row, /reminderDismiss/, 'P1/P2 行必须保留关闭按钮');
-  assert.match(row, /reminderAck/, 'P0 行必须保留标记已读按钮');
+  assert.match(row, /r\.severity !== 'P0' \|\| r\.unread !== true/, 'P0 关闭按钮必须等已读（unread!==true）后才渲染');
+  assert.match(row, /r\.unread === true/, '标记已读仅在未读时渲染（已读后不渲染标记已读）');
+  assert.match(row, /reminderDismiss/, '行内保留关闭按钮');
+  assert.match(row, /reminderAck/, '行内保留标记已读按钮');
+});
+
+test('P1/P2 提醒行按钮：未读两按钮（标记已读/关闭），已读未终态仅关闭', () => {
+  const row = functionBody('buildReminderRow');
+  // 标记已读按 unread 门控：已读未终态（unread!==true）不渲染标记已读；
+  // 关闭按钮条件对 P1/P2 恒真（severity!=='P0' 已满足），任何读态都渲染关闭。
+  assert.match(row, /r\.unread === true \? el\('button', \{ className: 'sap-detailToggle'/, '标记已读必须按未读门控');
+  assert.match(row, /r\.severity !== 'P0' \|\| r\.unread !== true/, '关闭按钮条件对 P1/P2 恒真');
+});
+
+test('已终态行隐藏动作按钮：通知类不渲染按钮区，未采纳类只留只读跳转', () => {
+  const row = functionBody('buildReminderRow');
+  assert.match(row, /typeof r\.action === 'string' && r\.action !== ''[\s\S]*?\? null/, '终态通知行必须把动作按钮区整体置空');
+  assert.match(row, /ZH\.reminderActed/, '终态通知行必须保留已处理灰字标注');
+  const actions = functionBody('buildUnadoptedActions');
+  assert.match(actions, /const terminated = typeof r\.action === 'string' && r\.action !== ''/, '未采纳动作区必须识别终态');
+  assert.match(actions, /terminated \? null : r\.unread === true/, '终态时标记已读按钮必须置空');
+  assert.match(actions, /terminated \? null : el\('button', \{ type: 'button', className: 'sap-dangerButton'/, '终态时关闭按钮必须置空');
+  assert.match(actions, /ZH\.reminderViewChild/, '查看子会话（只读跳转）在终态行保留');
 });
 
 test('已处理条目折叠后仍按现有行渲染并保留已处理灰字标注', () => {
