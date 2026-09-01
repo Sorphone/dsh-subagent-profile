@@ -76,7 +76,7 @@ test('transition：draft → proposed（观察占位），状态写入文件与�
   } finally { t.teardown(); }
 });
 
-test('sweepExpired：expiry 已过的 draft 置 expired；proposed/未过期不动', () => {
+test('sweepExpired：过期判定由装配层驱动，本域不按时间盲扫 draft', () => {
   const t = makeStore();
   try {
     const now = Date.now();
@@ -85,8 +85,8 @@ test('sweepExpired：expiry 已过的 draft 置 expired；proposed/未过期不�
     t.store.add(makeAsset('evo-down-e'));
     t.store.transition('evo-down-e', 'proposed');
     const swept = t.store.sweepExpired(now);
-    assert.equal(swept, 1);
-    assert.equal(t.store.get('evo-down-c').state, 'expired');
+    assert.equal(swept, 0, '资产域不再自动把过期草稿置 expired');
+    assert.equal(t.store.get('evo-down-c').state, 'draft', '过期草稿保持原态，换代由装配层驱动');
     assert.equal(t.store.get('evo-down-d').state, 'draft');
     assert.equal(t.store.get('evo-down-e').state, 'proposed');
   } finally { t.teardown(); }

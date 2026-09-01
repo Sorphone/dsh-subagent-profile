@@ -6,6 +6,7 @@
   <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" />
   <img alt="npm" src="https://img.shields.io/npm/v/dsh-subagent-profile.svg" />
   <img alt="DSH" src="https://img.shields.io/badge/DSH-0.1.0--rc.6%20~%200.2.0-blue.svg" />
+  <img alt="awesome · DSH plugin" src="https://awesome-dsh-plugin.com/badge.svg" />
 </div>
 
 <div align="center"><a href="README.md">English</a> · 中文</div>

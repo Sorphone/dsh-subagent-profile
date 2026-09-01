@@ -194,3 +194,56 @@ test('persistState: 三开关写路径回传 persisted 信号（/set-enabled 等
     assert.equal(escape.json.persisted, true, '/set-escape 必须回传 persisted');
   } finally { iso.restore(); iso.teardown(); }
 });
+
+test('候选设置默认值：新部署 /options/summary 回 candidateMode=auto / candidateTtlH=24', async () => {
+  const iso = makeIsolatedDshHome();
+  try {
+    const { routes } = await setupApp();
+    const summary = await callRoute(routes[0].handler, 'GET', '/options/summary');
+    assert.equal(summary.json.candidateMode, 'auto', '默认自动换新');
+    assert.equal(summary.json.candidateTtlH, 24, '默认 24 小时');
+  } finally { iso.restore(); iso.teardown(); }
+});
+
+test('候选设置读取校验：坏值归一默认；损坏 state.json fail-closed 仍回默认', async () => {
+  const iso = makeIsolatedDshHome();
+  try {
+    writeFileSync(join(iso.dir, 'subagent-profiles.state.json'), JSON.stringify({ enabled: true, candidateMode: 'weird', candidateTtlH: 99999 }), 'utf8');
+    const { routes } = await setupApp();
+    const summary = await callRoute(routes[0].handler, 'GET', '/options/summary');
+    assert.equal(summary.json.candidateMode, 'auto', '非法模式归一默认');
+    assert.equal(summary.json.candidateTtlH, 24, '非法有效期归一默认');
+  } finally { iso.restore(); iso.teardown(); }
+  const iso2 = makeIsolatedDshHome();
+  try {
+    writeFileSync(join(iso2.dir, 'subagent-profiles.state.json'), '{ not valid json', 'utf8');
+    const { routes } = await setupApp();
+    const summary = await callRoute(routes[0].handler, 'GET', '/options/summary');
+    assert.equal(summary.json.candidateMode, 'auto', '损坏文件回默认模式');
+    assert.equal(summary.json.candidateTtlH, 24, '损坏文件回默认有效期');
+    assert.equal(summary.json.enabled, false, '损坏文件其余开关仍 fail-closed');
+  } finally { iso2.restore(); iso2.teardown(); }
+});
+
+test('候选设置写路径：/settings/candidate 校验 400、合法值持久化并保留其余字段', async () => {
+  const iso = makeIsolatedDshHome();
+  try {
+    const { routes } = await setupApp();
+    const handler = routes[0].handler;
+    const badMode = await callRoute(handler, 'POST', '/settings/candidate', { candidateMode: 'x', candidateTtlH: 24 });
+    assert.equal(badMode.code, 400, '非法模式 400');
+    const badTtl = await callRoute(handler, 'POST', '/settings/candidate', { candidateMode: 'auto', candidateTtlH: 12.5 });
+    assert.equal(badTtl.code, 400, '非整数有效期 400');
+    const zero = await callRoute(handler, 'POST', '/settings/candidate', { candidateMode: 'auto', candidateTtlH: 0 });
+    assert.equal(zero.code, 200);
+    assert.equal(zero.json.persisted, true);
+    const custom = await callRoute(handler, 'POST', '/settings/candidate', { candidateMode: 'manual', candidateTtlH: 96 });
+    assert.equal(custom.code, 200);
+    assert.equal(custom.json.candidateMode, 'manual');
+    assert.equal(custom.json.candidateTtlH, 96);
+    const parsed = JSON.parse(readFileSync(join(iso.dir, 'subagent-profiles.state.json'), 'utf8'));
+    assert.equal(parsed.candidateMode, 'manual');
+    assert.equal(parsed.candidateTtlH, 96);
+    assert.equal(parsed.enabled, true, '持久化保留其余字段');
+  } finally { iso.restore(); iso.teardown(); }
+});

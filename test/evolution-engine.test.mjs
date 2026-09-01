@@ -39,7 +39,7 @@ const SUMMARIES = {
   l2: {},
 };
 
-function makeEngineDeps({ asset, summaries = SUMMARIES, applyEnabled = true, adviceEnabled = true, models = [], tools, profiles, presets = [] } = {}) {
+function makeEngineDeps({ asset, summaries = SUMMARIES, applyEnabled = true, adviceEnabled = true, models = [], tools, profiles, presets = [], candidateMode = 'auto', candidateTtlH = 24 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'evo-engine-test-'));
   const logs = [];
   const audits = [];
@@ -63,6 +63,8 @@ function makeEngineDeps({ asset, summaries = SUMMARIES, applyEnabled = true, adv
     getAllowFailOpen: () => false,
     getLlm: () => makeFakeLlm(models.length > 0 ? models : [{ id: 'm1' }]),
     getSummaries: () => summaries,
+    getCandidateMode: () => candidateMode,
+    getCandidateTtlH: () => candidateTtlH,
     pluginVersion: '0.0.0-test',
   });
   return { dir, assets, store, audits, logs, engine, teardown: () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } } };
@@ -336,6 +338,7 @@ test('路由集成：/list 生成候选 → /evolution/assets 可见 → /evolut
     const list = await callRoute(app.handler, 'GET', '/list');
     assert.equal(list.code, 200);
     assert.equal(list.json.advice.length, 1, '/list 返回建议');
+    assert.ok(list.json.adviceDetails !== null && typeof list.json.adviceDetails === 'object', '/list 下发派发明细键控表（无台账为空表）');
     const assetsRes = await callRoute(app.handler, 'GET', '/evolution/assets');
     assert.equal(assetsRes.code, 200);
     assert.equal(assetsRes.json.assets.length, 1, '候选资产已生成');
@@ -386,3 +389,124 @@ test('路由集成：建议链关 → /list 有建议但无候选资产（面板
     assert.equal(assetsRes.json.assets.length, 0, '无候选资产');
   } finally { app.iso.restore(); app.iso.teardown(); }
 });
+// --- 候选更新策略与有效期（候选分层轮）-------------------------------------------
+
+function makeRenewalEngine({ candidateMode = 'auto', candidateTtlH = 24 } = {}) {
+  const summaries = { ...SUMMARIES, l1: l1Group(0.3, 3) };
+  const deps = makeEngineDeps({ presets: [{ id: 'standard' }, { id: 'code' }], candidateMode, candidateTtlH, summaries });
+  return { ...deps, summaries };
+}
+
+function downAdvice() {
+  return [{ profileKey: 'preset:code', suggestion: '降', confidence: 'medium', performanceText: '过去 3 次：完成 1、失败 2', cooldownUntil: Date.now() + 60000 }];
+}
+
+function l1Group(score, n) {
+  return { 'preset:code': { score: { weighted_success: score }, confidence: { n, level: 'medium' }, cooldown: { until_ts: null } } };
+}
+
+test('auto：未处置且未到期 → 幂等跳过；到期但数据没显著变化 → 保留旧候选跳过', async () => {
+  const t = makeRenewalEngine();
+  try {
+    const first = await t.engine.generate({ advice: downAdvice(), summaries: t.summaries });
+    assert.equal(first.generated.length, 1);
+    const assetId = first.generated[0];
+    assert.ok(typeof t.assets.get(assetId).expiry === 'number' && t.assets.get(assetId).expiry > Date.now(), 'auto 默认按 24 小时给有效期');
+    const second = await t.engine.generate({ advice: downAdvice(), summaries: t.summaries });
+    assert.deepEqual(second.generated, [], '未到期幂等跳过');
+    assert.equal(second.skipped[0].reason, 'pending');
+    // 到期但数据没显著变化（样本只 +1、分数与置信度不变）→ 保留旧候选。
+    t.assets.transition(assetId, 'draft', { expiry: Date.now() - 1000 });
+    const slight = { ...t.summaries, l1: l1Group(0.3, 4) };
+    const third = await t.engine.generate({ advice: downAdvice(), summaries: slight });
+    assert.deepEqual(third.generated, [], '数据没显著变化不换新');
+    assert.equal(third.skipped[0].reason, 'no-significant-change');
+    assert.equal(t.assets.get(assetId).state, 'draft', '旧候选保留');
+  } finally { t.teardown(); }
+});
+
+test('auto 换代：全部到期且数据显著变化 → 旧候选 expired + 审计 + 新一代', async () => {
+  const t = makeRenewalEngine();
+  try {
+    const first = await t.engine.generate({ advice: downAdvice(), summaries: SUMMARIES });
+    const assetId = first.generated[0];
+    t.assets.transition(assetId, 'draft', { expiry: Date.now() - 1000 });
+    const changed = { ...t.summaries, l1: l1Group(0.15, 5) };
+    const second = await t.engine.generate({ advice: downAdvice(), summaries: changed });
+    assert.equal(second.generated.length, 1, '显著变化 → 产新一代');
+    assert.equal(t.assets.get(assetId).state, 'expired', '旧候选转 expired 留痕');
+    assert.ok(second.generated[0] !== assetId, '新一代用新编号');
+    const expireEvents = t.audits.filter((a) => a.event === 'suggestion-expire');
+    assert.equal(expireEvents.length, 1);
+    assert.equal(expireEvents[0].profile_id, assetId);
+    assert.equal(expireEvents[0].human_confirmed, false);
+    assert.equal(t.audits.filter((a) => a.event === 'suggestion-refresh').length, 0, '自动换代只记 expire');
+  } finally { t.teardown(); }
+});
+
+test('auto + 不自动过期（ttl=0）：expiry=null 恒不过期，数据变化也不自动换代', async () => {
+  const t = makeRenewalEngine({ candidateTtlH: 0 });
+  try {
+    const first = await t.engine.generate({ advice: downAdvice(), summaries: SUMMARIES });
+    assert.equal(t.assets.get(first.generated[0]).expiry, null, '不自动过期档 expiry=null');
+    const changed = { ...t.summaries, l1: l1Group(0.1, 9) };
+    const second = await t.engine.generate({ advice: downAdvice(), summaries: changed });
+    assert.deepEqual(second.generated, []);
+    assert.equal(second.skipped[0].reason, 'pending', 'expiry=null 恒不到期');
+  } finally { t.teardown(); }
+});
+
+test('manual：生成后不自动换代（数据变化也不产新）；expiry 恒 null；regenerate 一次性刷新', async () => {
+  const t = makeRenewalEngine({ candidateMode: 'manual', candidateTtlH: 24 });
+  try {
+    const first = await t.engine.generate({ advice: downAdvice(), summaries: SUMMARIES });
+    const assetId = first.generated[0];
+    assert.equal(t.assets.get(assetId).expiry, null, '手动维护等效不自动过期');
+    const changed = { ...SUMMARIES, l1: l1Group(0.1, 9) };
+    const second = await t.engine.generate({ advice: downAdvice(), summaries: changed });
+    assert.deepEqual(second.generated, [], '手动维护不自动换代');
+    assert.equal(second.skipped[0].reason, 'pending');
+    const result = await t.engine.regenerate({ profileKey: 'preset:code', advice: downAdvice(), summaries: changed });
+    assert.equal(result.expired.length, 1, '重新生成先把未处置候选转 expired');
+    assert.equal(t.assets.get(assetId).state, 'expired');
+    assert.equal(result.generated.length, 1, '重新生成产新一代');
+    assert.ok(result.generated[0] !== assetId, '新一代用新编号');
+    const refresh = t.audits.filter((a) => a.event === 'suggestion-refresh');
+    assert.equal(refresh.length, 1);
+    assert.equal(refresh[0].human_confirmed, true, '人工触发即确认');
+    assert.equal(refresh[0].profile_id, 'preset:code');
+    assert.equal(refresh[0].axis, 'capability');
+    assert.equal(refresh[0].direction, 'down');
+  } finally { t.teardown(); }
+});
+
+test('路由集成：/settings/candidate 校验与持久化；/advice/save-profile 保存来源配置为新方案', async () => {
+  const app = await setupApp({ applyEnabled: false, evolutionAdvice: true });
+  try {
+    const badMode = await callRoute(app.handler, 'POST', '/settings/candidate', { candidateMode: 'auto-something', candidateTtlH: 24 });
+    assert.equal(badMode.code, 400);
+    const badTtl = await callRoute(app.handler, 'POST', '/settings/candidate', { candidateMode: 'auto', candidateTtlH: 9000 });
+    assert.equal(badTtl.code, 400);
+    const ok = await callRoute(app.handler, 'POST', '/settings/candidate', { candidateMode: 'manual', candidateTtlH: 0 });
+    assert.equal(ok.code, 200);
+    assert.equal(ok.json.ok, true);
+    assert.equal(ok.json.candidateMode, 'manual');
+    assert.equal(ok.json.candidateTtlH, 0);
+    assert.equal(ok.json.persisted, true);
+    const stateFile = join(app.iso.dir, 'subagent-profiles.state.json');
+    const parsed = JSON.parse(readFileSync(stateFile, 'utf8'));
+    assert.equal(parsed.candidateMode, 'manual');
+    assert.equal(parsed.candidateTtlH, 0);
+    assert.equal(parsed.enabled, true, '持久化保留其余字段');
+    const saved = await callRoute(app.handler, 'POST', '/advice/save-profile', { profileKey: 'preset:code' });
+    assert.equal(saved.code, 200);
+    assert.equal(saved.json.ok, true);
+    assert.equal(saved.json.id, 'advice-preset-code');
+    const profilesFile = join(app.iso.dir, 'subagent-profiles.json');
+    const persisted = JSON.parse(readFileSync(profilesFile, 'utf8'));
+    assert.ok(persisted.profiles.some((p) => p.id === 'advice-preset-code'), '新方案落盘');
+    const emptyKey = await callRoute(app.handler, 'POST', '/advice/save-profile', { profileKey: '(inline)' });
+    assert.equal(emptyKey.code, 400, '无可还原字段拒绝');
+  } finally { app.iso.restore(); app.iso.teardown(); }
+});
+

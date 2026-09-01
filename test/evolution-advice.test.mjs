@@ -12,6 +12,7 @@ import {
   suggestAdvice,
   presetFromKey,
   assertSystemCandidate,
+  recentDispatchDetails,
 } from '../lib/core/evolution-advice.mjs';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
 import { makeRouteHarness, callRoute } from './harness/routes.mjs';
@@ -68,6 +69,44 @@ test('suggestAdvice：输出字段（profileKey/performanceText/suggestion/confi
   assert.match(r.performanceText, /加权成功分 0\.333/);
 });
 
+// --- suggestAdvice：对象描述与理由（候选分层轮）--------------------------------
+
+test('suggestAdvice objectText：降方向按最保守改变取一段（人格/工具过滤先、模型次之、预设最后）', () => {
+  const base = makeEntry({ n: 3, completed: 1, failed: 0, killed: 2, weightedSuccess: 0.333 });
+  assert.equal(suggestAdvice({ l1Entry: base, profileKey: 'preset:standard|persona:1|toolFilter:1|model:deepseek-v4-pro', now: 1000 }).objectText, '去掉自定义人格');
+  assert.equal(suggestAdvice({ l1Entry: base, profileKey: 'preset:standard|toolFilter:1', now: 1000 }).objectText, '移除工具过滤');
+  assert.equal(suggestAdvice({ l1Entry: base, profileKey: 'model:deepseek-v4-pro', now: 1000 }).objectText, '模型改用更低档');
+  assert.equal(suggestAdvice({ l1Entry: base, profileKey: 'preset:standard', now: 1000 }).objectText, '预设改用更低档');
+  const flat = suggestAdvice({ l1Entry: base, profileKey: '(inline)', now: 1000 });
+  assert.equal(flat.objectText, '', '平方向无对象描述');
+});
+
+test('suggestAdvice objectText：升方向按 L2 预算轴给推理强度/token 上限', () => {
+  const base = makeEntry({ n: 3, completed: 1, failed: 2, killed: 0, weightedSuccess: 0.333 });
+  const budgetEntry = { ...base, axes: { capability: false, budget: true } };
+  const effort = suggestAdvice({ l1Entry: budgetEntry, profileKey: '(inline)', l2: { '(inline):reasoningEffort:off': {} }, now: 1000 });
+  assert.equal(effort.suggestion, '升');
+  assert.equal(effort.objectText, '推理强度上调一档');
+  const tokens = suggestAdvice({ l1Entry: budgetEntry, profileKey: '(inline)', l2: { '(inline):maxTokens:1000': {} }, now: 1000 });
+  assert.equal(tokens.objectText, 'maxTokens 上调');
+});
+
+test('suggestAdvice reasonText：人格终止计数 / 工具过滤 / 模型 / 预设的确定性理由', () => {
+  const killed = makeEntry({ n: 3, completed: 1, failed: 0, killed: 2, weightedSuccess: 0.333 });
+  const persona = suggestAdvice({ l1Entry: killed, profileKey: 'persona:1', now: 1000 });
+  assert.equal(persona.reasonText, '带自定义人格的派发 3 次里 2 次被终止，去掉后可复用父会话统一提示');
+  const noKill = suggestAdvice({ l1Entry: makeEntry({ n: 3, completed: 1, failed: 2, killed: 0, weightedSuccess: 0.333 }), profileKey: 'persona:1', now: 1000 });
+  assert.equal(noKill.reasonText, '去掉自定义人格后，子 Agent 复用父会话统一提示，配置更简单');
+  const filter = suggestAdvice({ l1Entry: killed, profileKey: 'toolFilter:1', now: 1000 });
+  assert.equal(filter.reasonText, '移除工具过滤后，子 Agent 的工具面回到父会话范围，配置更简单');
+  const model = suggestAdvice({ l1Entry: killed, profileKey: 'model:deepseek-v4-pro', now: 1000 });
+  assert.equal(model.reasonText, '同类任务改用更低档模型，成本通常更低');
+  const preset = suggestAdvice({ l1Entry: killed, profileKey: 'preset:standard', now: 1000 });
+  assert.equal(preset.reasonText, '相邻低档预设能力相近，成本通常更低');
+  const up = suggestAdvice({ l1Entry: { ...killed, axes: { capability: false, budget: true } }, profileKey: '(inline)', l2: { '(inline):reasoningEffort:off': {} }, now: 1000 });
+  assert.equal(up.reasonText, '推理强度上调一档可提升复杂任务完成质量');
+});
+
 // --- suggestAdvice：升/降轴硬规则 ----------------------------------------------
 
 test('suggestAdvice：能力轴建议恒 ∈{降,平}，永不升', () => {
@@ -101,6 +140,25 @@ test('assertSystemCandidate：非 system 候选 fail-loud 抛错（不静默滤�
   assert.doesNotThrow(() => assertSystemCandidate(whitelist, null));
   assert.doesNotThrow(() => assertSystemCandidate(whitelist, 'inherit'));
   assert.throws(() => assertSystemCandidate(whitelist, 'custom'), /system-trust 白名单/);
+});
+
+test('recentDispatchDetails：按生效配置键匹配最近 N=5，只含渲染字段，无匹配/台账缺失空表', () => {
+  const iso = makeIsolatedDshHome();
+  try {
+    const evoDir = join(iso.dir, 'subagent-evolution');
+    mkdirSync(evoDir, { recursive: true });
+    const lines = [];
+    for (let i = 0; i < 7; i += 1) {
+      lines.push(JSON.stringify({ v: 1, ts: 1000 + i, session_id: 'session-a', child_id: 'sub-' + i, mode: 'foreground', effective: { preset: 'standard' }, outcome: { status: 'completed', elapsed_ms: 100 + i } }));
+    }
+    writeFileSync(join(evoDir, 'dispatch.jsonl'), lines.join('\n'), 'utf8');
+    const details = recentDispatchDetails(join(evoDir, 'dispatch.jsonl'), ['preset:standard'], { limit: 5 });
+    assert.equal(details['preset:standard'].length, 5, '只取最近 5 次');
+    assert.equal(details['preset:standard'][0].ts, 1006, '按时间倒序取最新');
+    assert.deepEqual(Object.keys(details['preset:standard'][0]).sort(), ['childId', 'elapsedMs', 'mode', 'outcome', 'sessionId', 'ts'], '只含渲染所需字段');
+    assert.deepEqual(recentDispatchDetails(join(evoDir, 'dispatch.jsonl'), ['preset:code']), {}, '无匹配为空表');
+    assert.deepEqual(recentDispatchDetails(join(iso.dir, 'missing.jsonl'), ['preset:standard']), {}, '台账缺失空表');
+  } finally { iso.restore(); iso.teardown(); }
 });
 
 // --- apply-time：注入段门控 + 路由 ---------------------------------------------

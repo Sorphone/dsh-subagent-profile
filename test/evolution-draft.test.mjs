@@ -10,6 +10,7 @@ import { MAX_TOKENS, sanitizeProfile } from '../lib/core/pure.mjs';
 import {
   EFFORT_LADDER,
   buildEvolutionDraft,
+  buildEvolutionCandidates,
   nextDraftId,
   profileFingerprint,
   sourceConfigFromKey,
@@ -200,3 +201,99 @@ test('sourceConfigFromKey：能力轴来自身份键、预算轴反查 L2', () =
   assert.deepEqual(sourceConfigFromKey('preset:standard|persona:1', {}), { preset: 'standard', persona_present: true });
   assert.deepEqual(EFFORT_LADDER, ['off', 'low', 'medium', 'high', 'max']);
 });
+
+// --- 多候选（候选分层轮）----------------------------------------------------------
+
+function buildMany(profileKey, extra = {}) {
+  return buildEvolutionCandidates({
+    advice: { profileKey, suggestion: '降', confidence: 'medium', performanceText: '过去 3 次：完成 1、失败 2', cooldownUntil: 100 },
+    l1Entry: { score: { weighted_success: 0.333 }, confidence: { n: 3, level: 'medium' } },
+    l2: {},
+    snapshot: SNAPSHOT,
+    whitelist: WHITELIST,
+    takenIds: [],
+    now: 1000,
+    ...extra,
+  });
+}
+
+test('多候选：单步在前、组合在后，保守 → 更激进排序，上限 ≤3', () => {
+  const drafts = buildMany('preset:standard|provider:p1|model:deepseek-v4-pro|toolFilter:1');
+  assert.equal(drafts.length, 3, '模型单步 + 结构单步 + 组合 = 3 条');
+  assert.equal(drafts[0].name, '模型改 deepseek-v4-flash（保守）');
+  assert.equal(drafts[0].config.model, 'deepseek-v4-flash');
+  assert.equal(drafts[1].name, '移除工具过滤（均衡）');
+  assert.equal(drafts[1].config.model, 'deepseek-v4-pro', '结构单步保留原模型');
+  assert.equal(drafts[2].name, '模型改 deepseek-v4-flash + 移除工具过滤（更激进）');
+  assert.equal(drafts[2].config.model, 'deepseek-v4-flash');
+  assert.ok(!('toolFilter' in drafts[2].config), '组合候选移除工具过滤');
+  // 五步可产时仍只取前 3（模型/结构/预设/两个组合 → 截断）。
+  const five = buildMany('preset:code|provider:p1|model:deepseek-v4-pro|persona:1');
+  assert.equal(five.length, 3, '候选上限 ≤3');
+});
+
+test('多候选：id 带 -c<N>（N=1..3），冲突追加 -2 同旧规则，sanitize 友好', () => {
+  const drafts = buildMany('preset:standard|provider:p1|model:deepseek-v4-pro|toolFilter:1');
+  assert.match(drafts[0].config.id, /-c1$/);
+  assert.match(drafts[1].config.id, /-c2$/);
+  assert.match(drafts[2].config.id, /-c3$/);
+  for (const draft of drafts) {
+    assert.match(draft.config.id, /^[a-z0-9-]+$/);
+    assert.ok(draft.config.id.length <= 32);
+    assertSanitizeClean(draft);
+  }
+  const taken = new Set([drafts[0].config.id]);
+  const conflicted = buildMany('preset:standard|provider:p1|model:deepseek-v4-pro|toolFilter:1', { takenIds: taken });
+  assert.equal(conflicted[0].config.id, drafts[0].config.id + '-2', '冲突追加 -2');
+});
+
+test('多候选：互斥快照——每条候选是完整 config，候选间互不叠加', () => {
+  const drafts = buildMany('preset:standard|provider:p1|model:deepseek-v4-pro|toolFilter:1');
+  const ids = new Set(drafts.map((d) => d.config.id));
+  assert.equal(ids.size, drafts.length, '候选 id 互不相同');
+  assert.deepEqual(drafts[1].config.preset, drafts[0].config.preset, '结构单步保留身份键内其余字段');
+  assert.ok(drafts[1].config.model !== drafts[0].config.model, '单步候选之间是替代关系而非累进');
+  assert.ok(drafts[2].config.toolFilter === undefined && drafts[2].config.model === drafts[0].config.model, '组合候选 = 第一条改动 + 结构移除');
+});
+
+test('跨方向禁止：降方向候选只含能力轴字段，升方向候选只含预算轴字段', () => {
+  const down = buildMany('preset:standard|provider:p1|model:deepseek-v4-pro|toolFilter:1');
+  for (const draft of down) {
+    assert.ok(!('reasoningEffort' in draft.config), '降候选不得携带推理强度');
+    assert.ok(!('maxTokens' in draft.config), '降候选不得携带 token 上限');
+  }
+  const up = buildEvolutionCandidates({
+    advice: { profileKey: '(inline)', suggestion: '升', confidence: 'medium', performanceText: 'x' },
+    l1Entry: { score: { weighted_success: 0.3 }, confidence: { n: 3, level: 'medium' } },
+    l2: { '(inline):reasoningEffort:off': {}, '(inline):maxTokens:1000': {} },
+    snapshot: SNAPSHOT,
+    whitelist: WHITELIST,
+    takenIds: [],
+    now: 1000,
+  });
+  assert.equal(up.length, 3, '推理单步 + token 单步 + 组合');
+  for (const draft of up) {
+    assert.ok(!('model' in draft.config) && !('preset' in draft.config) && !('provider' in draft.config), '升候选不得携带能力轴字段');
+    assertSanitizeClean(draft);
+  }
+  assert.equal(up[0].config.reasoningEffort, 'low');
+  assert.equal(up[1].config.maxTokens, 2000);
+  assert.deepEqual(up[2].config, { id: up[2].config.id, reasoningEffort: 'low', maxTokens: 2000, tokenTier: 'balanced' });
+});
+
+test('多候选：单候选时 buildEvolutionDraft 取第一条（最保守），语义兼容旧入口', () => {
+  const single = buildEvolutionDraft({
+    advice: { profileKey: 'persona:1', suggestion: '降', confidence: 'medium', performanceText: 'x' },
+    l1Entry: { score: { weighted_success: 0.3 }, confidence: { n: 3, level: 'medium' } },
+    l2: {},
+    snapshot: SNAPSHOT,
+    whitelist: WHITELIST,
+    takenIds: [],
+    now: 1000,
+  });
+  assert.ok(single, '旧入口仍产出');
+  assert.equal(single.name, '去掉自定义人格（保守）');
+  assert.match(single.config.id, /-c1$/);
+  assertSanitizeClean(single);
+});
+
