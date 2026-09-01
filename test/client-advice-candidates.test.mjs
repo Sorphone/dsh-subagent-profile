@@ -140,20 +140,22 @@ test('摘要行建议短句与展开区理由：对象描述/方向短词/理由
   assert.ok(source.includes("confidenceZh: { low: '低', medium: '中等', high: '高' }"));
   const card = functionBody('buildAdviceCard');
   assert.ok(card.includes('adviceSuggestionShort(a)'), '建议短句统一走纯函数');
-  assert.ok(card.includes('sap-adviceWhyBox'), '理由高亮区渲染 reasonText');
-  assert.ok(card.includes('ZH.adviceReasonPrefix'), '理由前缀');
+  assert.ok(card.includes('ZH.adviceSectionReason'), '理由小节标题渲染 reasonText 所在小节');
+  const section = functionBody('adviceSectionOf');
+  assert.ok(section.includes('sap-adviceSectionTitle'), '纯文字小节标题');
+  assert.ok(!card.includes('sap-adviceWhyBox'), '理由不再用高亮色块（v10）');
   const suggestion = functionBody('adviceSuggestionShort');
   assert.ok(suggestion.includes('objectText'), '建议必须带对象描述');
   assert.ok(suggestion.includes('adviceDirShortDown'));
   assert.ok(suggestion.includes('directionZh(a.suggestion)'), '无对象描述时回退旧格式（信息不删）');
 });
 
-test('候选方案区：三层结构（标题行/说明句/候选项行）+ 手动维护才给重新生成', () => {
+test('候选小节（v10）：纯文字标题「候选方案（未应用）」+ 数量说明行 + 候选项行；手动维护才给重新生成', () => {
   const block = functionBody('buildAdviceCandidates');
-  assert.ok(block.includes('sap-candidatesTitle'), '标题行方角标签');
+  assert.ok(block.includes('sap-candidatesTitle'), '小节标题');
   assert.ok(block.includes('candidateNotApplied'), '未应用灰注');
-  assert.ok(block.includes('candidates.length + ZH.candidateCountSuffix'), '数量 + 单选');
-  assert.ok(block.includes('candidateIntro'), '一句说明');
+  assert.ok(block.includes('candidates.length + ZH.candidateCountSuffix + ZH.candidateCountNote'), '数量 + 单选 + 仅参考');
+  assert.ok(block.includes('candidateCountNote'), '一句说明');
   assert.ok(block.includes("candidateMode === 'manual'"), '重新生成候选只在手动维护出现');
   assert.ok(block.includes('actions.regenerateCandidates'));
   assert.ok(source.includes("candidateRegenerate: '重新生成候选'"));

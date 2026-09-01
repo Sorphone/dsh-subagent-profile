@@ -87,7 +87,7 @@ test('有效期徽标：null=⏱ 无期限；数字=⏱ 至 MM-DD HH:mm（渲染
   assert.ok(row.includes('candidateValidityText(candidate.expiry)'), '徽标按候选 expiry 渲染在行内');
 });
 
-test('摘要行结构：对象/无方案 tag/建议短句/置信度/加权成功分/▼，点击展开（默认收起）', () => {
+test('摘要行结构（v10）：对象/无方案 tag/建议短句/置信度/▼ 结论三件套，去加权分', () => {
   const card = functionBody('buildAdviceCard');
   assert.ok(card.includes('sap-adviceSummary'), '摘要行容器');
   assert.ok(card.includes("'aria-expanded': open"), '摘要行可访问折叠态');
@@ -97,25 +97,32 @@ test('摘要行结构：对象/无方案 tag/建议短句/置信度/加权成功
   assert.ok(source.includes("adviceNoProfileTag: '无方案'"), '无方案 tag 文案');
   assert.ok(card.includes('adviceSuggestionShort(a)'), '建议短句');
   assert.ok(card.includes('ZH.adviceConfidence + confidenceZhOf(a.confidence)'), '置信度中文独立成列');
-  assert.ok(card.includes("metric.startsWith('加权成功分 ')"), '摘要行加权成功分');
   assert.ok(card.includes("'▼'"), '摘要行展开箭头');
+  assert.ok(!card.includes('sap-adviceScore'), '摘要行去加权分（结论三件套）');
+  assert.ok(!card.includes("metric.startsWith('加权成功分 ')"), '加权分不再进摘要行');
   assert.ok(card.includes("open !== true ? null : el('div', { className: 'sap-adviceDetail' }"), '展开区默认收起');
   assert.ok(card.includes("' sap-adviceItemOpen'"), '展开态卡片边界标记');
 });
 
-test('展开区顺序：理由高亮 → 明细 → 汇总（同左缘）→ 候选标注 → 操作区', () => {
+test('展开区小节结构（v10）：理由 → 近期表现 → 派发明细 → 候选方案（未应用）→ 操作区，纯文字小节标题', () => {
   const card = functionBody('buildAdviceCard');
-  assert.ok(card.includes('sap-adviceWhyBox'), '理由高亮区');
-  assert.ok(card.includes("el('b', null, ZH.adviceReasonPrefix)"), '理由前缀加粗');
-  const why = card.indexOf('sap-adviceWhyBox');
-  const detail = card.indexOf('buildAdviceDetails');
-  const metrics = card.indexOf('sap-adviceMetrics');
+  assert.ok(card.includes('adviceSectionOf(el, ZH.adviceSectionReason'), '理由小节');
+  assert.ok(card.includes('adviceSectionOf(el, ZH.adviceSectionPerf'), '近期表现小节');
+  assert.ok(card.includes('adviceSectionOf(el, ZH.adviceSectionDetail'), '派发明细小节');
+  const reason = card.indexOf('adviceSectionReason');
+  const perf = card.indexOf('adviceSectionPerf');
+  const detail = card.indexOf('adviceSectionDetail');
   const cand = card.indexOf('buildAdviceCandidates');
   const foot = card.indexOf('buildAdviceFoot');
-  assert.ok(why >= 0 && detail >= 0 && metrics >= 0 && cand >= 0 && foot >= 0, '五段必须齐全');
-  assert.ok(why < detail && detail < metrics && metrics < cand && cand < foot, '顺序 = 理由→明细→汇总→候选→操作');
-  assert.match(source, /\.sap-adviceMetrics\{[^}]*margin:0/, '汇总与明细同左缘（margin-left:0）');
-  assert.ok(card.includes("metrics.join(' · ')"), '汇总 = 加权成功分/耗时/输出单行');
+  assert.ok(reason >= 0 && perf >= 0 && detail >= 0 && cand >= 0 && foot >= 0, '五段必须齐全');
+  assert.ok(reason < perf && perf < detail && detail < cand && cand < foot, '顺序 = 理由→近期表现→派发明细→候选→操作');
+  const section = functionBody('adviceSectionOf');
+  assert.match(section, /'sap-adviceSectionTitle'/, '小节标题类');
+  assert.ok(!card.includes('sap-adviceWhyBox'), '理由不再用浅底+左线大色块');
+  assert.ok(!source.includes('.sap-adviceWhyBox'), '高亮色块样式已删除');
+  assert.ok(source.includes(".sap-adviceSectionTitle{color:var(--dsw-alias-label-primary);font-size:12px;line-height:18px;font-weight:700;"), '小节标题 = 纯文字加粗 label-primary');
+  assert.ok(card.includes("metrics.join(' · ')"), '近期表现 = 加权分/耗时/输出单行');
+  assert.ok(source.includes(".sap-candidates{flex-direction:column;gap:6px;margin-top:14px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2);"), '候选小节带上方分隔线');
 });
 
 test('派发明细折叠行：近期派发明细 · N 次（点击展开）文案 + 默认收起', () => {
@@ -125,6 +132,7 @@ test('派发明细折叠行：近期派发明细 · N 次（点击展开）文�
   assert.ok(detail.includes('ZH.adviceDetailTogglePrefix + rows.length + ZH.adviceDetailToggleSuffix'), 'N 次来自明细行数');
   assert.ok(detail.includes("'aria-expanded': open"), '折叠态可访问');
   assert.ok(detail.includes("map[profileKey] === true"), '默认收起（detailOpen 未置不展开）');
+  assert.ok(detail.indexOf('ZH.adviceDetailTogglePrefix') < detail.indexOf("'sap-adviceDetailArrow'"), '折叠箭头右置（文字后 ▸）');
   assert.ok(detail.includes('adviceDetailColSession'), '主会话列');
   assert.ok(detail.includes('adviceDetailColChild'), '子 Agent 列');
   assert.ok(detail.includes('dispatchOutcomeZh[row.outcome]'), '结果人话映射');
@@ -152,12 +160,14 @@ test('单选 radio：仅选中（候选第一条默认选中），行点击只�
   assert.ok(row.includes('sap-candidateRow'), '整行可点击（只展开）');
 });
 
-test('候选三层结构：标题行（方角标签 + N 个 · 单选）→ 说明句 → 候选项列表', () => {
+test('候选小节（v10）：纯文字加粗标题「候选方案（未应用）」+ 数量说明行 + 候选项列表', () => {
   const block = functionBody('buildAdviceCandidates');
-  assert.ok(block.includes("ZH.candidateTitle, el('span', { className: 'sap-candidatesNotApplied' }, ZH.candidateNotApplied)"), '标题行方角标签 + 未应用灰注');
-  assert.ok(block.includes("candidates.length + ZH.candidateCountSuffix"), '数量 + 单选');
-  assert.ok(block.includes('sap-candidatesDesc'), '说明一句');
-  assert.ok(block.includes('candidateIntro'));
+  assert.ok(block.includes("'sap-candidatesTitle'"), '小节标题类（纯文字加粗）');
+  assert.ok(block.includes('candidateNotApplied'), '未应用灰注');
+  assert.ok(block.includes('candidates.length + ZH.candidateCountSuffix + ZH.candidateCountNote'), '数量 + 单选 + 仅参考说明');
+  assert.ok(source.includes("candidateCountNote: ' · 仅参考，不会自动应用'"), '仅参考说明文案');
+  assert.ok(!block.includes('candidateIntro'), '旧「系统基于近期表现…」说明句由数量行取代');
+  assert.ok(!block.includes('sap-candidatesHead'), '方角标签头部行已移除（改小节标题）');
   assert.ok(block.includes('buildAdviceCandidateRow'), '候选项列表');
 });
 
@@ -194,7 +204,8 @@ test('自定义有效期校验：1~365 整数天 ×24 小时；非法返回 null
   assert.equal(candidateTtlChoiceOf(24), '24');
 });
 
-test('设置行文案：自动换新/手动维护 + 有效期人话（24 小时/3 天/7 天/不自动过期）', () => {
+test('设置行文案：候选时效标签 + 自动换新/手动维护 + 有效期人话（24 小时/3 天/7 天/不自动过期）', () => {
+  assert.ok(source.includes("candidateSettingsRow: '候选时效：'"), '设置行标签 = 候选时效（v10）');
   assert.equal(candidateModeTextOf('auto'), '自动换新');
   assert.equal(candidateModeTextOf('manual'), '手动维护');
   assert.equal(candidateTtlTextOf(24), '24 小时');
@@ -271,12 +282,15 @@ test('卡底部：无对应方案 [保存为方案]；有对应方案灰置[按�
   assert.ok(source.includes("adviceApplyDisabled: '按建议调整方案'"));
   assert.ok(source.includes("adviceRowLocate: '定位到方案管理'"));
   const foot = functionBody('buildAdviceFoot');
-  assert.ok(foot.includes('adviceFootPrimary'), '保存为方案主按钮');
+  assert.ok(foot.includes("'sap-primaryButton'"), '保存为方案用统一主按钮（sap-primaryButton）');
   assert.ok(foot.includes('actions.saveAdviceProfile(a.profileKey)'), '保存走来源配置');
-  assert.ok(foot.includes('adviceFootDisabled'), '灰置按建议调整方案');
+  assert.ok(foot.includes("'sap-secondaryButton'"), '灰置按建议调整方案用统一次级按钮（sap-secondaryButton）');
   assert.ok(foot.includes('disabled: true'), '调整按钮不可点');
   assert.ok(foot.includes("title: ZH.candidateNotApplicable"), '灰置提示应用功能后续开放');
   assert.ok(foot.includes('actions.locateProfile(profile.id)'), '定位到方案管理可用');
+  assert.ok(foot.includes('sap-adviceFootNotes'), '说明与生成于拆两行（notes 容器）');
+  assert.ok(foot.includes("generatedText !== '' ? el('p', { className: 'sap-adviceFootNote' }, generatedText)"), '生成于独立成行');
+  assert.ok(!foot.includes("adviceFootNoteSave + generatedText"), '说明与生成于不再连排一行');
   assert.ok(foot.includes('adviceFootNoteSave'), '无方案卡备注说明存的是当前配置');
   assert.ok(source.includes("adviceFootNoteSave: '仅保存预设、模型与提供方；自定义人格与工具过滤无法还原（隐私保护不落盘），如需完整配置请手动编辑方案。'"), '按钮副注注明只存可还原配置');
   assert.ok(foot.includes('adviceFootNoteMatchedPrefix'), '有方案卡备注带方案名');

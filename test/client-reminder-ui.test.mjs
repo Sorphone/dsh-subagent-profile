@@ -89,6 +89,28 @@ test('未采纳条目按钮收敛：处置仅影响提醒状态，不渲染采�
   assert.doesNotMatch(actions, /act\(r\.id, 'reject'\)/, '不得渲染拒绝按钮');
 });
 
+test('v20 微调：候选时效标签加粗值常规；已处理折叠无上边框细线', () => {
+  const row = functionBody('buildCandidateSettingsRow');
+  assert.match(row, /el\('b', null, ZH\.candidateSettingsRow\)/, '「候选时效：」标签加粗（b 用于标签）');
+  assert.match(row, /el\('span', null, candidateModeTextOf/, '模式/有效期值恢复常规字重');
+  assert.ok(source.includes(".sap-reminderHandled{border-top:none;padding-top:8px}"), '已处理变体样式 = 无上边框');
+  const center = functionBody('buildReminderCenter');
+  assert.match(center, /'sap-customized sap-customizedArrowEnd sap-reminderHandled'/, '已处理折叠挂无线上边框变体');
+  assert.match(source, /\.sap-customized\{border-top:1px solid var\(--dsw-alias-border-l2\)/, '其余 sap-customized 用途上边框不动');
+});
+
+test('提醒中心外层 = sap-card 与方案管理同款（卡头/卡体包绕，条目内部不动）', () => {
+  const body = functionBody('buildReminderCenter');
+  assert.match(body, /className: 'sap-card sap-cardStatic'/, '外层 = sap-card sap-cardStatic');
+  assert.match(body, /'sap-cardHead'/, '卡头存在');
+  assert.match(body, /'sap-cardTitleBox'/, '卡头标题盒');
+  assert.match(body, /'sap-cardTitle'/, '卡头标题');
+  assert.match(body, /ZH\.reminderCenterTitle/, '标题 = 提醒中心');
+  assert.match(body, /'sap-cardBody'/, '错误提示/未处理列表/已处理折叠包进卡体');
+  assert.doesNotMatch(body, /className: 'sap-rowCard'/, '外层不再用 rowCard');
+  assert.match(body, /'sap-customized/, '已处理折叠 details 原样保留');
+});
+
 test('提醒分层：默认列表只渲染未终态条目，已终态折叠为「已处理（N）」可展开区', () => {
   const body = functionBody('buildReminderCenter');
   assert.match(body, /typeof r\.action === 'string' && r\.action !== ''/, '终态判据必须按 action 非空识别');
