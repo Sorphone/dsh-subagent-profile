@@ -166,7 +166,7 @@ test('advice section: orchestrator + 开关开 + 欠佳 profile → 注入仅含
     assert.match(text, /过去 3 次/);
     assert.match(text, /加权成功分 0\.333/);
     assert.match(text, /建议降级/);
-    assert.match(text, /置信度 medium/);
+    assert.match(text, /置信度 中等/);
     // 注入段只含确定性聚合数字与建议文案，永不含子 Agent 派生原文（如 persona/prompt 结构指纹）。
     assert.doesNotMatch(text, /persona_fp|structure|child_id|prompt/);
   } finally { iso.restore(); iso.teardown(); }

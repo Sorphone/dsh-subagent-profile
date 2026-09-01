@@ -39,7 +39,7 @@ const SUMMARIES = {
   l2: {},
 };
 
-function makeEngineDeps({ asset, summaries = SUMMARIES, applyEnabled = true, models = [], tools, profiles } = {}) {
+function makeEngineDeps({ asset, summaries = SUMMARIES, applyEnabled = true, adviceEnabled = true, models = [], tools, profiles, presets = [] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'evo-engine-test-'));
   const logs = [];
   const audits = [];
@@ -53,12 +53,13 @@ function makeEngineDeps({ asset, summaries = SUMMARIES, applyEnabled = true, mod
   const evoLedger = { recordGovernanceAudit: (entry) => audits.push(entry) };
   const engine = createEvolutionEngine({
     store,
-    catalog: makeCatalog({ models, tools }),
+    catalog: makeCatalog({ models, tools, presets }),
     assets,
     evoLedger,
     whitelist: new Set(['standard', 'code']),
     logger: { warn: (...a) => logs.push(a.join(' ')) },
     getApplyEnabled: () => applyEnabled,
+    getAdviceEnabled: () => adviceEnabled,
     getAllowFailOpen: () => false,
     getLlm: () => makeFakeLlm(models.length > 0 ? models : [{ id: 'm1' }]),
     getSummaries: () => summaries,
@@ -234,16 +235,26 @@ test('同资产并发 apply 只生效一次（串行化）', async () => {
 
 // --- 开关 / 生成 --------------------------------------------------------------------
 
-test('apply 开关关（默认）→ 生成与应用都拒绝', async () => {
-  const t = makeEngineDeps({ applyEnabled: false });
+test('门控解耦：apply 开关关（默认）→ 建议链开仍生成候选；apply 仍被拒', async () => {
+  const t = makeEngineDeps({ applyEnabled: false, adviceEnabled: true, presets: [{ id: 'standard' }, { id: 'code' }] });
   try {
-    const advice = [{ profileKey: 'preset:code', suggestion: '降', confidence: 'medium', performanceText: 'x', cooldownUntil: Date.now() + 60000 }];
+    const advice = [{ profileKey: 'preset:code', suggestion: '降', confidence: 'medium', performanceText: '过去 3 次：完成 1、失败 2', cooldownUntil: Date.now() + 60000 }];
     const generated = await t.engine.generate({ advice, summaries: SUMMARIES });
-    assert.equal(generated.reason, 'apply-disabled');
-    assert.deepEqual(generated.generated, []);
+    assert.equal(generated.generated.length, 1, 'apply 开关关不影响候选生成（生成随建议链）');
+    assert.equal(t.assets.get(generated.generated[0]).state, 'draft');
     const applied = await t.engine.apply({ assetId: 'evo-down-a', humanConfirmed: true });
-    assert.equal(applied.ok, false);
+    assert.equal(applied.ok, false, '应用写路径保持 apply 开关硬线');
     assert.match(applied.reason, /开关/);
+  } finally { t.teardown(); }
+});
+
+test('门控解耦：建议链关 → 不生成候选（apply 开关开也不生成）', async () => {
+  const t = makeEngineDeps({ applyEnabled: true, adviceEnabled: false, presets: [{ id: 'standard' }, { id: 'code' }] });
+  try {
+    const advice = [{ profileKey: 'preset:code', suggestion: '降', confidence: 'medium', performanceText: '过去 3 次：完成 1、失败 2', cooldownUntil: Date.now() + 60000 }];
+    const generated = await t.engine.generate({ advice, summaries: SUMMARIES });
+    assert.equal(generated.reason, 'advice-disabled');
+    assert.deepEqual(generated.generated, []);
   } finally { t.teardown(); }
 });
 
@@ -261,6 +272,7 @@ test('生成：建议 → 资产落盘；同身份键幂等跳过；总量 ≥20
       whitelist: new Set(['standard', 'code']),
       logger: { warn: () => {} },
       getApplyEnabled: () => true,
+      getAdviceEnabled: () => true,
       getAllowFailOpen: () => false,
       getLlm: () => makeFakeLlm([]),
       getSummaries: () => SUMMARIES,
@@ -308,9 +320,9 @@ function agentPresetsStub() {
   };
 }
 
-async function setupApp({ applyEnabled }) {
+async function setupApp({ applyEnabled, evolutionAdvice = false }) {
   const iso = makeIsolatedDshHome();
-  writeFileSync(join(iso.dir, 'subagent-profiles.state.json'), JSON.stringify({ enabled: true, evolutionAdvice: false, escapeEnabled: false, applyEnabled: applyEnabled === true }), 'utf8');
+  writeFileSync(join(iso.dir, 'subagent-profiles.state.json'), JSON.stringify({ enabled: true, evolutionAdvice: evolutionAdvice === true, escapeEnabled: false, applyEnabled: applyEnabled === true }), 'utf8');
   writeSummariesFixture(iso.dir, { 'preset:code': underperformingEntry() });
   const { webServer, routes } = makeRouteHarness();
   const { ctx } = createFakeCtx({ services: { webServer, agentPresets: agentPresetsStub(), llm: makeFakeLlm([]) } });
@@ -319,7 +331,7 @@ async function setupApp({ applyEnabled }) {
 }
 
 test('路由集成：/list 生成候选 → /evolution/assets 可见 → /evolution/apply 应用落盘 + 审计', async () => {
-  const app = await setupApp({ applyEnabled: true });
+  const app = await setupApp({ applyEnabled: true, evolutionAdvice: true });
   try {
     const list = await callRoute(app.handler, 'GET', '/list');
     assert.equal(list.code, 200);
@@ -347,15 +359,30 @@ test('路由集成：/list 生成候选 → /evolution/assets 可见 → /evolut
   } finally { app.iso.restore(); app.iso.teardown(); }
 });
 
-test('路由集成：apply 开关关 → /evolution/apply 拒绝；/list 不生成资产', async () => {
-  const app = await setupApp({ applyEnabled: false });
+test('路由集成：apply 开关关 → 建议链开时 /list 生成候选可见；/evolution/apply 仍被拒（解耦）', async () => {
+  const app = await setupApp({ applyEnabled: false, evolutionAdvice: true });
   try {
     const list = await callRoute(app.handler, 'GET', '/list');
     assert.equal(list.code, 200);
+    assert.equal(list.json.advice.length, 1, '/list 返回建议');
+    assert.equal(list.json.evolutionCandidates.length, 1, '候选随建议链生成并随 /list 可见');
+    assert.equal(list.json.evolutionCandidates[0].state, 'draft');
     const assetsRes = await callRoute(app.handler, 'GET', '/evolution/assets');
-    assert.equal(assetsRes.json.assets.length, 0, '开关关不生成候选');
-    const applied = await callRoute(app.handler, 'POST', '/evolution/apply', { assetId: 'any', human_confirmed: true });
+    assert.equal(assetsRes.json.assets.length, 1, '候选资产已生成');
+    const applied = await callRoute(app.handler, 'POST', '/evolution/apply', { assetId: list.json.evolutionCandidates[0].id, human_confirmed: true });
     assert.equal(applied.code, 400);
     assert.match(applied.json.error, /开关/);
+  } finally { app.iso.restore(); app.iso.teardown(); }
+});
+
+test('路由集成：建议链关 → /list 有建议但无候选资产（面板与生成同生共死）', async () => {
+  const app = await setupApp({ applyEnabled: true, evolutionAdvice: false });
+  try {
+    const list = await callRoute(app.handler, 'GET', '/list');
+    assert.equal(list.code, 200);
+    assert.equal(list.json.advice.length, 1, '建议仍返回（设置面板只读展示）');
+    assert.equal(list.json.evolutionCandidates.length, 0, '建议链关不生成候选');
+    const assetsRes = await callRoute(app.handler, 'GET', '/evolution/assets');
+    assert.equal(assetsRes.json.assets.length, 0, '无候选资产');
   } finally { app.iso.restore(); app.iso.teardown(); }
 });

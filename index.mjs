@@ -199,10 +199,10 @@ async function resolveAdviceWhitelist(ctx) {
   }
 }
 
-async function setupEvolution(ctx, home, store, catalog, evoLedger) {
+async function setupEvolution(ctx, home, store, catalog, evoLedger, getEvolutionAdvice) {
   const adviceWhitelist = await resolveAdviceWhitelist(ctx);
   const adviceEnv = { summariesFile: join(home, 'subagent-evolution', 'summaries.json'), dispatchFile: join(home, 'subagent-evolution', 'dispatch.jsonl'), whitelist: adviceWhitelist, logger: ctx.logger, onLoss: () => evoLedger.markMigrationLoss() };
-  const { adviceSource, evolution } = createEvolutionAssembly({ ctx, home, store, catalog, evoLedger, adviceWhitelist, pluginVersion: readPluginVersion() });
+  const { adviceSource, evolution } = createEvolutionAssembly({ ctx, home, store, catalog, evoLedger, adviceWhitelist, getEvolutionAdvice, pluginVersion: readPluginVersion() });
   return { adviceEnv, adviceSource, evolution };
 }
 
@@ -394,7 +394,7 @@ export async function apply(ctx) {
   const adoptionTracker = setupAdoptionTracker(ctx, home, () => refreshAdvice, (rec) => mintUnadoptedReminder(reminderStore, evoLedger, rec));
   const dispatch = createDispatch(ctx, store, catalog, ledger, guard, evoLedger, backgroundLedger, adoptionTracker, escapeCtl.getEscapeSet, () => enabled, () => evolutionAdvice);
   provideProfileService(ctx, store);
-  const { adviceEnv, adviceSource, evolution } = await setupEvolution(ctx, home, store, catalog, evoLedger);
+  const { adviceEnv, adviceSource, evolution } = await setupEvolution(ctx, home, store, catalog, evoLedger, () => evolutionAdvice);
   // 生产聚合触发点（T1 修复）：/options/refresh 与 /list 触发的惰性重算；parent_adopted
   // 的「已确认未采纳」计数经 opts 惰性 join 进 weighted_success（-0.3 惩罚）。
   refreshAdvice = () => refreshSummaries({ dispatchFile: adviceEnv.dispatchFile, summariesFile: adviceEnv.summariesFile, logger: ctx.logger, opts: { parentAdoptedConfirmedFalse: adoptionTracker.confirmedFalseCounts() } });
