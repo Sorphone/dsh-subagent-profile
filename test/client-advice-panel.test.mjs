@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const source = readFileSync(fileURLToPath(new URL('../lib/client.js', import.meta.url)), 'utf8');
+const routesSource = readFileSync(fileURLToPath(new URL('../lib/core/evolution-routes.mjs', import.meta.url)), 'utf8');
 
 function functionBody(name) {
   const start = source.indexOf('function ' + name);
@@ -247,10 +248,16 @@ test('卡底部：无对应方案 [保存为方案]；有对应方案灰置[按�
   assert.ok(foot.includes("title: ZH.candidateNotApplicable"), '灰置提示应用功能后续开放');
   assert.ok(foot.includes('actions.locateProfile(profile.id)'), '定位到方案管理可用');
   assert.ok(foot.includes('adviceFootNoteSave'), '无方案卡备注说明存的是当前配置');
+  assert.ok(source.includes("adviceFootNoteSave: '仅保存预设、模型与提供方；自定义人格与工具过滤无法还原（隐私保护不落盘），如需完整配置请手动编辑方案。'"), '按钮副注注明只存可还原配置');
   assert.ok(foot.includes('adviceFootNoteMatchedPrefix'), '有方案卡备注带方案名');
   const card = functionBody('buildAdviceCard');
   assert.ok(card.includes('buildAdviceFoot'), '每张建议卡都带底部操作区');
   assert.ok(!card.includes('存为草稿'), '不做存为草稿方案');
+});
+
+test('保存为方案路由：description 注明配置快照仅预设/模型/提供方（人格与工具过滤不落盘）', () => {
+  assert.ok(routesSource.includes("description: '来自建议面板的配置快照（仅预设/模型/提供方；人格与工具过滤不落盘，按隐私设计）。便于复用与对比。'"), '路由 description 按隐私设计诚实化');
+  assert.ok(!routesSource.includes('由建议面板保存的当前派发配置'), '旧 description 文案已替换');
 });
 
 test('生成信息行：生成于 MM-DD、基于当时数据（N=…、加权 …）+ 应用提示', () => {
