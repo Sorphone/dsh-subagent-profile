@@ -201,7 +201,7 @@ async function resolveAdviceWhitelist(ctx) {
 
 async function setupEvolution(ctx, home, store, catalog, evoLedger) {
   const adviceWhitelist = await resolveAdviceWhitelist(ctx);
-  const adviceEnv = { summariesFile: join(home, 'subagent-evolution', 'summaries.json'), dispatchFile: join(home, 'subagent-evolution', 'dispatch.jsonl'), whitelist: adviceWhitelist, logger: ctx.logger };
+  const adviceEnv = { summariesFile: join(home, 'subagent-evolution', 'summaries.json'), dispatchFile: join(home, 'subagent-evolution', 'dispatch.jsonl'), whitelist: adviceWhitelist, logger: ctx.logger, onLoss: () => evoLedger.markMigrationLoss() };
   const { adviceSource, evolution } = createEvolutionAssembly({ ctx, home, store, catalog, evoLedger, adviceWhitelist, pluginVersion: readPluginVersion() });
   return { adviceEnv, adviceSource, evolution };
 }
@@ -216,7 +216,7 @@ function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice
     order: 116.5,
     text: (context) => {
       let summaries = null;
-      try { summaries = readSummaries(adviceEnv.summariesFile, adviceEnv.logger); } catch { /* 统计只增强，不影响目录注入 */ }
+      try { summaries = readSummaries(adviceEnv.summariesFile, adviceEnv.logger, { onLoss: adviceEnv.onLoss }); } catch { /* 统计只增强，不影响目录注入 */ }
       return profileSectionText(store, gate, context, summaries);
     },
   });
