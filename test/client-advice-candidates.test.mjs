@@ -68,6 +68,7 @@ const adviceObjectTitleOf = new Function('ZH', 'return (' + functionSource('advi
 const adviceEvidenceOf = new Function('return (' + functionSource('adviceEvidenceOf') + ')')();
 const candidateChangesOf = new Function('return (' + functionSource('candidateChangesOf') + ')')();
 const CHECK_ZH = new Function('return (' + constBody('CHECK_ZH') + ')')();
+const adviceSummaryObjectText = new Function('ZH', 'adviceObjectTitleOf', 'profileKeyZh', 'return (' + functionSource('adviceSummaryObjectText') + ')')(ZH, adviceObjectTitleOf, profileKeyZh);
 
 test('profileKeyZh：单段映射（preset/provider/model/persona/toolFilter/effort）', () => {
   assert.equal(profileKeyZh('preset:standard'), '预设：standard');
@@ -98,22 +99,24 @@ test('CHECK_ZH：安全检查四项人话映射，原词只留 tooltip 供排查
   assert.ok(preview.includes('title: c.name'), '原始检查项名只保留在 tooltip');
 });
 
-test('建议卡标题 = 建议对象（已有方案/手动配置），profileKey 只作特征灰字', () => {
+test('摘要行对象 = 建议对象（已有方案/手动配置+特征），无方案挂 tag', () => {
   assert.equal(adviceObjectTitleOf({ id: 'swap-standard', name: '标准编码' }), '方案：标准编码');
   assert.equal(adviceObjectTitleOf(null), '手动配置的派发');
+  assert.equal(adviceSummaryObjectText({ id: 'swap-standard', name: '标准编码' }, 'preset:standard'), '方案：标准编码');
+  assert.equal(adviceSummaryObjectText(null, '(inline)|persona:1'), '手动配置的派发（含自定义人格）');
+  assert.equal(adviceSummaryObjectText(null, '(inline)'), '手动配置的派发', '无特征时不带空括号');
   const card = functionBody('buildAdviceCard');
-  assert.ok(card.includes('adviceObjectTitleOf(profile)'), '标题必须由建议对象推导');
-  assert.ok(card.includes('sap-adviceTitleSrc'), '配置特征作为灰字附在标题行');
-  assert.ok(card.includes('profileKeyZh(a.profileKey)'));
+  assert.ok(card.includes('adviceSummaryObjectText(profile, a.profileKey)'), '摘要行对象必须由建议对象推导');
+  assert.ok(card.includes('sap-adviceNoProfileTag'), '无方案 tag 挂摘要行');
   assert.ok(!card.includes('adviceCardTitleOf'), '旧的「建议卡 · 基于最近 N 次派发」标题已移除');
 });
 
-test('对应关系行：有方案显示 id，无方案显示未用命名方案', () => {
-  assert.ok(source.includes("adviceMetaNoProfile: '无对应方案（派发时未用命名方案）'"));
-  assert.ok(source.includes("adviceMetaProfilePrefix: '对应方案：'"));
-  const card = functionBody('buildAdviceCard');
-  assert.ok(card.includes('adviceMetaProfilePrefix + profile.id'));
-  assert.ok(card.includes('adviceMetaNoProfile'));
+test('对应方案：有方案进底部备注（名称 + id），无方案摘要行带「无方案」tag', () => {
+  const foot = functionBody('buildAdviceFoot');
+  assert.ok(foot.includes('adviceFootNoteMatchedPrefix'), '有方案备注前缀');
+  assert.ok(foot.includes('(profile.name || profile.id)'), '有方案备注带名称');
+  assert.ok(foot.includes("'（' + profile.id + '）'"), '有方案备注带 id');
+  assert.ok(source.includes("adviceNoProfileTag: '无方案'"), '无方案 tag 文案');
 });
 
 test('指标只渲染一遍：单行「加权成功分 · 平均耗时 · 平均输出」，不再重复计数行', () => {
@@ -129,19 +132,19 @@ test('指标只渲染一遍：单行「加权成功分 · 平均耗时 · 平均
   );
 });
 
-test('建议行直接带对象与理由：对象描述/理由前缀渲染，置信度中文', () => {
+test('摘要行建议短句与展开区理由：对象描述/方向短词/理由高亮', () => {
   assert.ok(source.includes("adviceSuggestionPrefix: '建议：'"));
   assert.ok(source.includes("adviceReasonPrefix: '理由：'"));
   assert.ok(source.includes("adviceDirShortDown: '降级'"));
   assert.ok(source.includes("adviceDirShortUp: '升预算'"));
   assert.ok(source.includes("confidenceZh: { low: '低', medium: '中等', high: '高' }"));
   const card = functionBody('buildAdviceCard');
-  assert.ok(card.includes('adviceSuggestionText(a)'), '建议一句话统一走纯函数');
-  assert.ok(card.includes('adviceReasonPrefix + a.reasonText'), '理由行渲染 reasonText');
-  const suggestion = functionBody('adviceSuggestionText');
+  assert.ok(card.includes('adviceSuggestionShort(a)'), '建议短句统一走纯函数');
+  assert.ok(card.includes('sap-adviceWhyBox'), '理由高亮区渲染 reasonText');
+  assert.ok(card.includes('ZH.adviceReasonPrefix'), '理由前缀');
+  const suggestion = functionBody('adviceSuggestionShort');
   assert.ok(suggestion.includes('objectText'), '建议必须带对象描述');
   assert.ok(suggestion.includes('adviceDirShortDown'));
-  assert.ok(suggestion.includes('confidenceZhOf(a.confidence)'));
   assert.ok(suggestion.includes('directionZh(a.suggestion)'), '无对象描述时回退旧格式（信息不删）');
 });
 

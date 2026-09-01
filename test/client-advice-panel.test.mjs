@@ -60,9 +60,8 @@ function constBody(name) {
 
 // 纯函数提取执行（ZH 注入）。
 const ZH = new Function('return (' + constBody('ZH') + ')')();
-const confidenceZhOf = new Function('ZH', 'return (' + functionSource('confidenceZhOf') + ')')(ZH);
 const directionZh = new Function('ZH', 'return (' + functionSource('directionZh') + ')')(ZH);
-const adviceSuggestionText = new Function('ZH', 'confidenceZhOf', 'directionZh', 'return (' + functionSource('adviceSuggestionText') + ')')(ZH, confidenceZhOf, directionZh);
+const adviceSuggestionShort = new Function('ZH', 'directionZh', 'return (' + functionSource('adviceSuggestionShort') + ')')(ZH, directionZh);
 const formatMonthDayTime = new Function('return (' + functionSource('formatMonthDayTime') + ')')();
 const candidateValidityText = new Function('ZH', 'formatMonthDayTime', 'return (' + functionSource('candidateValidityText') + ')')(ZH, formatMonthDayTime);
 const candidateTtlFromForm = new Function('return (' + functionSource('candidateTtlFromForm') + ')')();
@@ -70,13 +69,13 @@ const candidateTtlChoiceOf = new Function('return (' + functionSource('candidate
 const candidateModeTextOf = new Function('ZH', 'return (' + functionSource('candidateModeTextOf') + ')')(ZH);
 const candidateTtlTextOf = new Function('ZH', 'return (' + functionSource('candidateTtlTextOf') + ')')(ZH);
 
-test('建议一句话：对象描述 + 方向短词 + 中文置信度；旧格式回退', () => {
-  assert.equal(adviceSuggestionText({ objectText: '模型改用更低档', suggestion: '降', confidence: 'high' }),
-    '建议：模型改用更低档（降级）' + '\u3000' + '置信度：高');
-  assert.equal(adviceSuggestionText({ objectText: '推理强度上调一档', suggestion: '升', confidence: 'medium' }),
-    '建议：推理强度上调一档（升预算）' + '\u3000' + '置信度：中等');
-  assert.equal(adviceSuggestionText({ objectText: '', suggestion: '降', confidence: 'low' }),
-    '建议降级（置信度：低）', '无对象描述回退旧格式');
+test('摘要行建议短句：对象 + 方向短词（降级/升预算）；无对象描述回退方向词', () => {
+  assert.equal(adviceSuggestionShort({ objectText: '模型改用更低档', suggestion: '降' }),
+    '建议：模型改用更低档（降级）');
+  assert.equal(adviceSuggestionShort({ objectText: '推理强度上调一档', suggestion: '升' }),
+    '建议：推理强度上调一档（升预算）');
+  assert.equal(adviceSuggestionShort({ objectText: '', suggestion: '降' }),
+    '建议降级', '无对象描述回退方向词');
 });
 
 test('有效期徽标：null=⏱ 无期限；数字=⏱ 至 MM-DD HH:mm（渲染条件 expiry）', () => {
@@ -86,6 +85,37 @@ test('有效期徽标：null=⏱ 无期限；数字=⏱ 至 MM-DD HH:mm（渲染
   assert.equal(candidateValidityText(stamp), '⏱ 至 ' + formatMonthDayTime(stamp));
   const row = functionBody('buildAdviceCandidateRow');
   assert.ok(row.includes('candidateValidityText(candidate.expiry)'), '徽标按候选 expiry 渲染在行内');
+});
+
+test('摘要行结构：对象/无方案 tag/建议短句/置信度/加权成功分/▼，点击展开（默认收起）', () => {
+  const card = functionBody('buildAdviceCard');
+  assert.ok(card.includes('sap-adviceSummary'), '摘要行容器');
+  assert.ok(card.includes("'aria-expanded': open"), '摘要行可访问折叠态');
+  assert.ok(card.includes('actions.toggleAdviceOpen(a.profileKey)'), '点击摘要行展开/收起');
+  assert.ok(card.includes('adviceSummaryObjectText(profile, a.profileKey)'), '对象由方案匹配推导');
+  assert.ok(card.includes("profile === null ? el('span', { className: 'sap-adviceNoProfileTag' }, ZH.adviceNoProfileTag) : null"), '无方案 tag 条件渲染');
+  assert.ok(source.includes("adviceNoProfileTag: '无方案'"), '无方案 tag 文案');
+  assert.ok(card.includes('adviceSuggestionShort(a)'), '建议短句');
+  assert.ok(card.includes('ZH.adviceConfidence + confidenceZhOf(a.confidence)'), '置信度中文独立成列');
+  assert.ok(card.includes("metric.startsWith('加权成功分 ')"), '摘要行加权成功分');
+  assert.ok(card.includes("'▼'"), '摘要行展开箭头');
+  assert.ok(card.includes("open !== true ? null : el('div', { className: 'sap-adviceDetail' }"), '展开区默认收起');
+  assert.ok(card.includes("' sap-adviceItemOpen'"), '展开态卡片边界标记');
+});
+
+test('展开区顺序：理由高亮 → 明细 → 汇总（同左缘）→ 候选标注 → 操作区', () => {
+  const card = functionBody('buildAdviceCard');
+  assert.ok(card.includes('sap-adviceWhyBox'), '理由高亮区');
+  assert.ok(card.includes("el('b', null, ZH.adviceReasonPrefix)"), '理由前缀加粗');
+  const why = card.indexOf('sap-adviceWhyBox');
+  const detail = card.indexOf('buildAdviceDetails');
+  const metrics = card.indexOf('sap-adviceMetrics');
+  const cand = card.indexOf('buildAdviceCandidates');
+  const foot = card.indexOf('buildAdviceFoot');
+  assert.ok(why >= 0 && detail >= 0 && metrics >= 0 && cand >= 0 && foot >= 0, '五段必须齐全');
+  assert.ok(why < detail && detail < metrics && metrics < cand && cand < foot, '顺序 = 理由→明细→汇总→候选→操作');
+  assert.match(source, /\.sap-adviceMetrics\{[^}]*margin:0/, '汇总与明细同左缘（margin-left:0）');
+  assert.ok(card.includes("metrics.join(' · ')"), '汇总 = 加权成功分/耗时/输出单行');
 });
 
 test('派发明细折叠行：近期派发明细 · N 次（点击展开）文案 + 默认收起', () => {
