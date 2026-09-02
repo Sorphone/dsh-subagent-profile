@@ -170,7 +170,8 @@ test('候选行：radio 仅选中、行点击只展开；有效期徽标在行�
   assert.ok(row.includes('candidateValidityText(candidate.expiry)'), '有效期徽标按候选行渲染');
   assert.ok(row.includes('sap-candidateValidity'));
   assert.ok(row.includes("'候选 ' + (index + 1) + ' · ' + candidate.name"), '候选编号与名字');
-  assert.ok(row.includes('buildDraftPreview'), '安全检查仍在候选展开区内');
+  assert.ok(row.includes('buildCandidateSafetyChecks'), '安全检查四项在候选展开区内（缩进列表）');
+  assert.ok(!row.includes('buildDraftPreview'), '不再复用 draft 预览（避免重复「全部通过 ✓」第二行）');
   assert.ok(row.includes('candidateSafetyPending'), '安全检查未返回时给核对中占位');
   assert.ok(row.includes('candidateSafetyToggle'), '安全检查默认收起（toggle 展开四项）');
 });
@@ -184,6 +185,61 @@ test('candidateChangesOf：改动项人话（去掉结构 / 换成新值）', ()
   assert.deepEqual(candidateChangesOf('effort:low', { reasoningEffort: 'medium' }), ['推理强度 → medium']);
   assert.deepEqual(candidateChangesOf('effort:off', { maxTokens: 2000 }), ['token 上限 → 2000']);
   assert.deepEqual(candidateChangesOf('preset:standard|persona:1', { preset: 'standard', persona_present: true }), []);
+});
+
+test('候选展开区（v21）：组小节标题（改动/安全检查/生成信息）+ 缩进人话四项 + 无重复标题', () => {
+  const row = functionBody('buildAdviceCandidateRow');
+  assert.match(row, /'sap-candidateGroup'/, '分组容器');
+  assert.match(row, /'sap-candidateGroupTitle'/, '组小节标题');
+  assert.ok(row.includes('candidateGroupChanges'), '改动小节标题');
+  assert.ok(row.includes('candidateGroupGenerated'), '生成信息小节标题');
+  const passCount = row.split('candidateSafetyPass').length - 1;
+  assert.equal(passCount, 1, '「全部通过 ✓」仅折叠行标题一处（无重复第二行）');
+  const checks = functionBody('buildCandidateSafetyChecks');
+  assert.match(checks, /'sap-candidateSafetyList'/, '四项检查缩进列表');
+  assert.match(checks, /CHECK_ZH\[c\.name\] \|\| c\.name/, '检查项人话映射');
+  assert.match(checks, /'✅ '|'❌ '/, '通过/拒绝标识');
+  assert.ok(source.includes(".sap-candidateSafetyList{margin:0 0 0 16px;"), '缩进 16px 对齐折叠文字下方');
+  assert.ok(source.includes("candidateGroupChanges: '改动'"), '改动文案');
+  assert.ok(source.includes("candidateGroupGenerated: '生成信息'"), '生成信息文案');
+});
+
+test('候选展开区（v22）：详情区缩进三档（16px 小节 / 再 16px 检查项）；安全检查折叠行加粗', () => {
+  assert.ok(source.includes(".sap-candidateBody{border-top:1px dashed var(--dsw-alias-border-l2);margin-top:4px;padding-top:8px;padding-left:16px;flex-direction:column;gap:6px;display:flex}"), '详情区整体左缩进 16px（小节不再贴边）');
+  assert.ok(source.includes(".sap-candidateSafetyList{margin:0 0 0 16px;"), '检查项在详情区基线上再缩进 16px（三级错落保持）');
+  assert.ok(source.includes(".sap-candidateSafetyToggle{border:0;background:0 0;padding:0;margin:0;font:inherit;cursor:pointer;color:var(--dsw-alias-label-secondary);align-items:center;gap:4px;font-size:12px;line-height:18px;display:inline-flex;align-self:flex-start;font-weight:600}"), '「安全检查：全部通过 ✓ ▼」折叠行整行加粗（小节标题态）');
+  assert.ok(!/\.sap-candidateSafetyItem\{[^}]*font-weight/.test(source), '展开后的四项检查列表保持常规字重');
+  assert.ok(!/\.sap-candidateChange\{[^}]*font-weight/.test(source) && !/\.sap-candidateHint\{[^}]*font-weight/.test(source), '改动内容/生成信息不加粗');
+});
+
+test('生成信息模板执行：有样本整数化（满分 100）；无样本/无时间分支；旧「N=/加权」无残留', () => {
+  const formatMonthDayTime = new Function('return (' + functionSource('formatMonthDayTime') + ')')();
+  const mockEl = (type, props, ...children) => children.join('');
+  const line = new Function('ZH', 'formatMonthDayTime', 'el', 'return (' + functionSource('candidateGeneratedLine') + ')')(ZH, formatMonthDayTime, mockEl);
+  const stamp = new Date(2026, 7, 31, 10, 30).getTime();
+  assert.equal(line(mockEl, { basis: { generatedAt: stamp, n: 3, score: 0.31 } }),
+    '生成于 ' + formatMonthDayTime(stamp) + ' · 基于最近 3 次派发 · 近期表现 31（满分 100）', '有样本模板');
+  assert.equal(line(mockEl, { basis: { generatedAt: stamp, n: 3, score: 0.033 } }),
+    '生成于 ' + formatMonthDayTime(stamp) + ' · 基于最近 3 次派发 · 近期表现 3（满分 100）', 'score×100 整数化');
+  assert.equal(line(mockEl, { basis: { generatedAt: stamp, n: 0, score: 0 } }),
+    '生成于 ' + formatMonthDayTime(stamp) + ' · 暂无近期派发样本，仅供参考', '无样本分支');
+  assert.equal(line(mockEl, { basis: {} }), '暂无近期派发样本，仅供参考', '无数据 + 无时间：无「生成于」段、无 0 分');
+  assert.equal(line(mockEl, { basis: { n: 5, score: 0.5 } }), '基于最近 5 次派发 · 近期表现 50（满分 100）', '无时间省「生成于」段');
+  assert.ok(!source.includes('基于当时数据'), '旧「基于当时数据」文案无残留');
+  assert.ok(!source.includes('candidateBasisScore'), '旧「、加权」模板无残留');
+  assert.ok(!source.includes("'N='"), '旧「N=」拼接无残留');
+});
+
+test('展开箭头字符统一：候选行/安全检查 = 尾随 ▸ + 展开态 rotate 90deg（无 ▼/▾ 字符切换残留）', () => {
+  const row = functionBody('buildAdviceCandidateRow');
+  assert.ok(row.includes("'▸'"), '候选行收起态 = ▸');
+  assert.ok(!row.includes("'▼'"), '候选行不再用固定 ▼');
+  assert.ok(row.includes("'sap-candidateSafetyArrow'"), '安全检查箭头 span 尾随');
+  assert.ok(!row.includes("'▾'"), '安全检查不再字符切换');
+  assert.ok(source.includes(".sap-candidateOpen .sap-candidateArrow{transform:rotate(90deg)}"), '候选行展开旋转 90°');
+  assert.ok(source.includes(".sap-candidateSafetyToggleOpen .sap-candidateSafetyArrow{transform:rotate(90deg)}"), '安全检查展开旋转 90°');
+  assert.ok(!source.includes("'▼'"), '全文件无固定 ▼ 字符残留');
+  assert.ok(!source.includes("'▾'"), '全文件无 ▾ 字符切换残留');
 });
 
 test('候选 toggle 可关闭：展开拉取安全检查、收起不重复拉取（mock 断言）', async () => {

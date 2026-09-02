@@ -97,9 +97,14 @@ test('③ 自进化与建议（v16）：卡头仅标题+右侧开启建议开关
   assert.ok(!source.includes('function buildAdviceSection'), '顶部独立开关小卡不存在');
   const panel = functionBody('buildAdvicePanel');
   assert.match(panel, /className: 'sap-card sap-cardStatic'/, '大卡 = sap-card');
-  assert.match(panel, /'sap-cardHead'/, '卡头存在');
+  assert.match(panel, /'sap-cardHead/, '卡头存在');
+  assert.match(panel, /'sap-cardHead sap-adviceCardHead'/, '卡头重排：列向两行');
+  assert.match(panel, /'sap-adviceHeadTitleRow'/, '第一行 = 标题 + 右侧开关');
   assert.match(panel, /ZH\.adviceTitle/, '卡头标题 = 派发优化建议');
   assert.match(panel, /ZH\.adviceEnableLabel/, '右侧「开启建议」开关');
+  const titleRow = panel.indexOf("'sap-adviceHeadTitleRow'");
+  const descPos = panel.indexOf('ZH.advicePanelDesc');
+  assert.ok(titleRow >= 0 && descPos >= 0 && titleRow < descPos, 'desc 小字独占第二行（不挤占标题+开关行）');
   const headStart = panel.indexOf("'sap-cardHead'");
   const bodyStart = panel.indexOf("'sap-cardBody'");
   const head = panel.slice(headStart, bodyStart);
@@ -129,7 +134,8 @@ test('④ 安全：安全保证 + 逃生舱原样 + 审计健康（只读明细�
   assert.match(escapeCard, /className: 'sap-card sap-cardStatic'/, '逃生舱卡 = sap-card');
   const audit = functionBody('buildAuditDetails');
   assert.match(audit, /ZH\.auditDetailToggle/, '查看审计明细折叠入口');
-  assert.match(audit, /'▾'|'▸'/, '▸/▼ 折叠箭头');
+  assert.match(audit, /'▸'/, '审计明细收起态 = ▸（不再字符切换）');
+  assert.ok(source.includes('.sap-auditCollapse[aria-expanded="true"] .sap-auditArrow{transform:rotate(90deg)}'), '审计明细展开态旋转 90°');
   assert.match(audit, /ZH\.auditColTime/, '时间列');
   assert.match(audit, /ZH\.auditColEvent/, '事件列');
   assert.match(audit, /ZH\.auditColObject/, '对象列');
@@ -192,6 +198,15 @@ test('卡头 desc 小字（v20）：③④⑤ 各卡 = title + sap-cardDesc（�
   assert.match(safety, /buildSettingsCard\(el, 6, ZH\.auditCardTitle, ZH\.auditCardDesc/, '④ 审计健康 desc 参数');
 });
 
+test('滚动条优化（v21）：sap-section 撑满宿主宽；tab 行 flex-wrap，无横向滚动结构', () => {
+  assert.ok(source.includes(".sap-section{width:100%;color:var(--dsw-alias-label-primary);flex-direction:column;gap:12px;display:flex}"), 'sap-section 撑满宿主可用宽');
+  assert.ok(!source.includes('max-width:720px'), '设置页不再限制 720px（去右侧大空白）');
+  assert.ok(source.includes(".sap-tabs{display:flex;flex-wrap:wrap;gap:2px;border-bottom:1px solid var(--dsw-alias-border-l2);flex:none}"), 'tab 行 flex-wrap');
+  assert.ok(!/\.sap-tabs\{[^}]*overflow-x/.test(source), 'tab 行无横向滚动');
+  assert.ok(source.includes(".sap-adviceDetailTable th{text-align:left;font-weight:500;color:var(--dsw-alias-label-tertiary);padding:3px 8px 3px 0;border-bottom:1px solid var(--dsw-alias-border-l2)}"), '明细表头可换行');
+  assert.ok(!/\.sap-adviceDetailTable th\{[^}]*white-space:nowrap/.test(source), '明细表头不强制不换行（防窄面板横向溢出）');
+});
+
 test('样式统一（§1.6）：无方案标签/候选选中/未读边框/理由高亮/候选标注 全部中性 token，无 brand-primary 于常规状态标签', () => {
   assert.ok(source.includes(".sap-adviceNoProfileTag{font-size:11px;line-height:16px;color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);border-radius:3px;padding:0 5px;flex:none}"), '无方案标签 token 快照：label-primary + border-l2 + bg-layer-1');
   assert.ok(!source.includes('.sap-adviceNoProfileTag{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l3)'), '无方案标签旧样式（l3/次级色）已移除');
@@ -222,6 +237,8 @@ test('样式统一（§1.6）：⑥ 通知条目 = sap-rowCard/sap-reminder*，�
   assert.match(center, /'sap-customizedBody'/, '折叠体 = sap-customizedBody');
   assert.match(center, /'sap-customized sap-customizedArrowEnd/, '已处理折叠箭头右置修饰类');
   assert.match(center, /'sap-customizedEndArrow'/, '折叠箭头放在文字后（▸）');
+  assert.ok(source.includes(".sap-customizedArrowEnd[open] .sap-customizedEndArrow{transform:rotate(90deg)}"), '已处理折叠展开旋转 90°（▸→▾）');
+  assert.match(source, /'高级选项', el\('span', \{ className: 'sap-customizedEndArrow' \}, '▸'\)/, '① 高级选项折叠同款尾随 ▸');
   const row = functionBody('buildReminderRow');
   assert.match(row, /'sap-reminderHead'/, '提醒条目 = sap-reminder* 系');
 });

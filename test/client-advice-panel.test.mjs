@@ -87,7 +87,7 @@ test('有效期徽标：null=⏱ 无期限；数字=⏱ 至 MM-DD HH:mm（渲染
   assert.ok(row.includes('candidateValidityText(candidate.expiry)'), '徽标按候选 expiry 渲染在行内');
 });
 
-test('摘要行结构（v10）：对象/无方案 tag/建议短句/置信度/▼ 结论三件套，去加权分', () => {
+test('摘要行结构（v10）：对象/无方案 tag/建议短句/置信度/▸ 结论三件套，去加权分', () => {
   const card = functionBody('buildAdviceCard');
   assert.ok(card.includes('sap-adviceSummary'), '摘要行容器');
   assert.ok(card.includes("'aria-expanded': open"), '摘要行可访问折叠态');
@@ -97,7 +97,12 @@ test('摘要行结构（v10）：对象/无方案 tag/建议短句/置信度/▼
   assert.ok(source.includes("adviceNoProfileTag: '无方案'"), '无方案 tag 文案');
   assert.ok(card.includes('adviceSuggestionShort(a)'), '建议短句');
   assert.ok(card.includes('ZH.adviceConfidence + confidenceZhOf(a.confidence)'), '置信度中文独立成列');
-  assert.ok(card.includes("'▼'"), '摘要行展开箭头');
+  assert.ok(card.includes("'▸'"), '摘要行收起态箭头 = ▸');
+  assert.ok(source.includes(".sap-adviceItemOpen .sap-adviceSummaryArrow{transform:rotate(90deg)}"), '展开态 ▸ 旋转 90° 变 ▾');
+  assert.ok(card.includes("'sap-adviceObjLine'"), '第一行 = 对象 + 无方案 tag');
+  assert.ok(card.includes("'sap-adviceSummaryLine'"), '第二行 = 建议 + 置信度 + ▸');
+  assert.ok(card.indexOf("'sap-adviceObjLine'") < card.indexOf("'sap-adviceSummaryLine'"), '对象行在前、结论行在后（两行化）');
+  assert.ok(source.includes(".sap-adviceSummary{box-sizing:border-box;width:100%;border:0;background:0 0;padding:10px 14px;margin:0;font:inherit;text-align:left;cursor:pointer;flex-direction:column;align-items:stretch;gap:2px;display:flex}"), '摘要容器列向两行');
   assert.ok(!card.includes('sap-adviceScore'), '摘要行去加权分（结论三件套）');
   assert.ok(!card.includes("metric.startsWith('加权成功分 ')"), '加权分不再进摘要行');
   assert.ok(card.includes("open !== true ? null : el('div', { className: 'sap-adviceDetail' }"), '展开区默认收起');
@@ -133,6 +138,8 @@ test('派发明细折叠行：近期派发明细 · N 次（点击展开）文�
   assert.ok(detail.includes("'aria-expanded': open"), '折叠态可访问');
   assert.ok(detail.includes("map[profileKey] === true"), '默认收起（detailOpen 未置不展开）');
   assert.ok(detail.indexOf('ZH.adviceDetailTogglePrefix') < detail.indexOf("'sap-adviceDetailArrow'"), '折叠箭头右置（文字后 ▸）');
+  assert.ok(detail.includes("'▸'") && !detail.includes("'▾'"), '派发明细收起态 = ▸（不再字符切换）');
+  assert.ok(source.includes('.sap-adviceDetailToggle[aria-expanded="true"] .sap-adviceDetailArrow{transform:rotate(90deg)}'), '派发明细展开态旋转 90°');
   assert.ok(detail.includes('adviceDetailColSession'), '主会话列');
   assert.ok(detail.includes('adviceDetailColChild'), '子 Agent 列');
   assert.ok(detail.includes('dispatchOutcomeZh[row.outcome]'), '结果人话映射');
@@ -147,7 +154,10 @@ test('安全检查默认收起：展开区内部 toggle（全部通过 ✓ ▸�
   assert.ok(source.includes("candidateSafetyPass: '全部通过 ✓'"));
   const row = functionBody('buildAdviceCandidateRow');
   assert.ok(row.includes('candidateSafetyToggle'), '安全检查自带收起 toggle');
-  assert.ok(row.includes('safetyOpen === true ? buildDraftPreview(el, preview) : null'), '默认收起不渲染四项');
+  assert.ok(row.includes('safetyOpen === true ? buildCandidateSafetyChecks(el, preview) : null'), '默认收起不渲染四项');
+  assert.ok(row.includes("'sap-candidateSafetyArrow'"), '安全检查箭头 span 尾随');
+  assert.match(row, /' ?sap-candidateSafetyToggleOpen'/, '安全检查展开态修饰类');
+  assert.ok(!row.includes("'▾'"), '安全检查不再字符切换（▸ + 旋转）');
   assert.ok(row.includes('actions.toggleCandidateSafety(candidate)'), '点击 toggle 展开/收起');
 });
 
@@ -304,10 +314,16 @@ test('保存为方案路由：description 注明配置快照仅预设/模型/提
   assert.ok(!routesSource.includes('由建议面板保存的当前派发配置'), '旧 description 文案已替换');
 });
 
-test('生成信息行：生成于 MM-DD、基于当时数据（N=…、加权 …）+ 应用提示', () => {
+test('生成信息行：有样本/无样本两分支模板（N 次派发 / 近期表现 X（满分 100）/ 暂无样本），应用提示不动', () => {
   const line = functionBody('candidateGeneratedLine');
-  assert.ok(line.includes("ZH.candidateGeneratedPrefix + formatMonthDayTime(basis.generatedAt)"), '生成时间');
-  assert.ok(line.includes('basis.n'), '样本数');
-  assert.ok(line.includes('basis.score'), '加权成功分');
+  assert.ok(line.includes('candidateSamplesPrefix'), '基于最近 N 次派发');
+  assert.ok(line.includes('candidatePerfPrefix + score100 + ZH.candidatePerfSuffix'), '近期表现 X（满分 100）');
+  assert.ok(line.includes('candidateNoSample'), '无样本分支');
+  assert.ok(line.includes("n >= 1"), '按样本数分支');
+  assert.ok(line.includes("Math.round(basis.score * 100)"), '加权分 ×100 整数化');
+  assert.ok(line.includes("parts.join(' · ')"), '分段以 · 连接');
+  assert.ok(line.includes("if (generated !== '') parts.push(ZH.candidateGeneratedPrefix + generated)"), '无生成时间省「生成于」段');
+  assert.ok(source.includes("candidatePerfSuffix: '（满分 100）'"), '满分 100 文案');
+  assert.ok(source.includes("candidateNoSample: '暂无近期派发样本，仅供参考'"), '无样本文案');
   assert.ok(source.includes("candidateNotApplicable: '应用功能在后续版本开放（届时会先经你确认）'"), '应用提示收进展开区尾部');
 });
