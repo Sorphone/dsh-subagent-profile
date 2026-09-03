@@ -277,7 +277,7 @@ test('refreshSummaries：dispatch.jsonl 缺失返回 skipped:no-ledger（不写�
   } finally { t.cleanup(); }
 });
 
-// --- 版本校验（§12.5，2026-08 评审第二轮）------------------------------------------
+// --- 版本校验（2026-08 评审第二轮）------------------------------------------
 
 test('readSummaries：未知版本 fail-soft 跳过（v≠1 → null + warn，不读数据）', () => {
   const t = tmpDir();
@@ -350,7 +350,7 @@ test('computeAdvice：无 summaries → 空建议 + 空全局', () => {
   } finally { t.cleanup(); }
 });
 
-// --- L1 键去 effort（聚合语义修正，2026-08 任务书批次 2 断线二）------------------
+// --- L1 键去 effort（聚合语义修正，2026-08 断线二）------------------
 
 test('computeSummaries：同一 profile 不同 effort 聚合为一条 L1（effort 不混入身份键）', () => {
   const records = [

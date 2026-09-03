@@ -1,7 +1,10 @@
-// test/evolution-advice.test.mjs — 派发优化建议注入（evolution:advice，默认关）。
+// test/evolution-advice.test.mjs — 派发优化建议（evolution:advice）。
 //   纯函数 suggestAdvice（四条件 + 升/降轴硬规则 + cooldown）+ 非 system 候选
-//   fail-loud + 注入段门控（开关/编排者）+ POST /set-evolution-advice 路由。
-// 纯函数段直接 import evolution-summary.mjs（无 index 依赖）；门控/路由段动态
+//   fail-loud + 面板渲染（renderAdviceText）+ POST /set-evolution-advice 路由。
+//   模型侧注入下架：evolution:advice section 注册结构保留但 text 恒空
+//   （开关/编排者/数据齐全都不注入），trace 的 advice_present 埋点恒 false；
+//   人类面板（建议卡/提醒中心/审计行）数据链不受影响。
+// 纯函数段直接 import evolution-advice.mjs（无 index 依赖）；门控/路由段动态
 // import index.mjs（junction），复用 test/harness 的 ctx 与 routes。
 
 import { test } from 'node:test';
@@ -13,6 +16,7 @@ import {
   presetFromKey,
   assertSystemCandidate,
   recentDispatchDetails,
+  renderAdviceText,
 } from '../lib/core/evolution-advice.mjs';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
 import { makeRouteHarness, callRoute } from './harness/routes.mjs';
@@ -66,7 +70,7 @@ test('suggestAdvice：输出字段（profileKey/performanceText/suggestion/confi
   assert.equal(r.confidence, 'medium');
   assert.equal(r.cooldownUntil, 1000 + 600000);
   assert.match(r.performanceText, /过去 3 次/);
-  assert.match(r.performanceText, /加权成功分 0\.333/);
+  assert.match(r.performanceText, /近期表现分 0\.333/);
 });
 
 // --- suggestAdvice：对象描述与理由（候选分层轮）--------------------------------
@@ -163,7 +167,7 @@ test('recentDispatchDetails：按生效配置键匹配最近 N=5，只含渲染�
 
 // --- apply-time：注入段门控 + 路由 ---------------------------------------------
 
-const ORCHESTRATOR_STUB = { composedPreset: () => 'orchestrator' };
+const ORCHESTRATOR_STUB = { composedPreset: () => 'orchestrator-v2' };
 const STANDARD_STUB = { composedPreset: () => 'standard' };
 
 function underperformingEntry() {
@@ -189,75 +193,104 @@ async function postAdvice(routes, adviceValue) {
   return callRoute(routes[0].handler, 'POST', '/set-evolution-advice', { advice: adviceValue });
 }
 
-test('advice section: 默认关（evolutionAdvice=false）→ orchestrator + 有数据也不注入', async () => {
+test('advice section: 模型侧恒空——注册结构保留、默认关也不注入', async () => {
   const iso = makeIsolatedDshHome();
   try {
     writeSummariesFixture(iso.dir, { 'preset:standard': underperformingEntry() });
     const { records } = await setupApp({ agentPresets: ORCHESTRATOR_STUB });
     const advice = records.sectionCalls.find((s) => s.name === 'evolution:advice');
-    assert.ok(advice, 'evolution:advice section must be registered');
+    assert.ok(advice, 'evolution:advice section must be registered（注册结构保留）');
     assert.equal(advice.order, 116.8);
-    assert.equal(advice.text({ agent: { ctx: {} } }), '', '默认关不注入');
+    assert.equal(advice.text({ agent: { ctx: {} } }), '', '默认关恒空');
+    assert.equal(advice.text({ agent: {} }), '', '任意 context 恒空');
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('advice section: 非 orchestrator → 即便开关开也不注入', async () => {
+test('advice section: 非 orchestrator-v2 / standard → 同样恒空', async () => {
   const iso = makeIsolatedDshHome();
   try {
     writeSummariesFixture(iso.dir, { 'preset:standard': underperformingEntry() });
     const { routes, records } = await setupApp({ agentPresets: STANDARD_STUB });
     await postAdvice(routes, true);
     const advice = records.sectionCalls.find((s) => s.name === 'evolution:advice');
-    assert.equal(advice.text({ agent: { ctx: {} } }), '', '非 orchestrator 不注入');
+    assert.equal(advice.text({ agent: { ctx: {} } }), '', 'standard → advice 恒空');
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('advice section: orchestrator + 开关开 + 欠佳 profile → 注入仅含聚合数字', async () => {
+test('advice section: orchestrator-v2 + 开关开 + 欠佳 profile → 模型侧仍恒空', async () => {
   const iso = makeIsolatedDshHome();
   try {
     writeSummariesFixture(iso.dir, { 'preset:standard': underperformingEntry() });
     const { routes, records } = await setupApp({ agentPresets: ORCHESTRATOR_STUB });
     await postAdvice(routes, true);
     const advice = records.sectionCalls.find((s) => s.name === 'evolution:advice');
-    const text = advice.text({ agent: { ctx: {} } });
-    assert.ok(text.length > 0, 'orchestrator + 开关开 → 注入非空');
-    assert.match(text, /过去 3 次/);
-    assert.match(text, /加权成功分 0\.333/);
-    assert.match(text, /建议降级/);
-    assert.match(text, /置信度 中等/);
-    // 注入段只含确定性聚合数字与建议文案，永不含子 Agent 派生原文（如 persona/prompt 结构指纹）。
-    assert.doesNotMatch(text, /persona_fp|structure|child_id|prompt/);
+    assert.equal(advice.text({ agent: { ctx: {} } }), '', 'orchestrator-v2 + 开关开 + 有数据 → 恒空（不再注入聚合数字）');
+    assert.equal(advice.text({ agent: {} }), '');
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('advice section: 非 system 候选出现在建议生成路径 → warn 留痕 + 注入可见标注（F4 不再静默）', async () => {
+test('advice section: 非 system 候选不再经注入段报错（恒空、无 warn——生成链已不在模型侧）', async () => {
   const iso = makeIsolatedDshHome();
   try {
     writeSummariesFixture(iso.dir, { 'preset:custom': underperformingEntry() });
     const { routes, records } = await setupApp({ agentPresets: ORCHESTRATOR_STUB });
     await postAdvice(routes, true);
     const advice = records.sectionCalls.find((s) => s.name === 'evolution:advice');
-    // F4：text 回调不抛；候选校验失败（如逃生舱放行的非 system 预设）不再静默
-    // 空转——warn 留痕 + 注入段标注「建议暂不可用及原因」。
     const text = advice.text({ agent: { ctx: {} } });
-    assert.match(text, /派发优化建议暂不可用/, '候选校验失败必须注入可见标注');
-    assert.match(text, /system-trust 白名单/, '标注必须携带失败原因');
-    assert.match(text, /派发行为不受影响/, '标注必须声明不影响派发行为');
-    assert.ok(records.logs.warn.some((args) => String(args).includes('system-trust 白名单')), 'warn 留痕 fail-loud 语义');
+    assert.equal(text, '', '候选校验失败不再产生注入可见标注（模型侧已下架）');
+    assert.ok(!records.logs.warn.some((args) => String(args).includes('system-trust 白名单')), '注入段不再触发候选校验 warn（面板校验在 /list 链）');
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('advice section: N<3 的非 system 候选组不抛、不 warn（校验在建议判定之后，F4）', async () => {
+test('advice section: N<3 非 system 候选组同样恒空、不抛、不 warn', async () => {
   const iso = makeIsolatedDshHome();
   try {
-    // N=2 < minN=3：不产出建议，因此不触发 system-trust 校验（F4：校验先于判定会误抛）。
     writeSummariesFixture(iso.dir, { 'preset:custom': makeEntry({ n: 2, completed: 0, failed: 2, killed: 0, weightedSuccess: 0 }) });
     const { routes, records } = await setupApp({ agentPresets: ORCHESTRATOR_STUB });
     await postAdvice(routes, true);
     const advice = records.sectionCalls.find((s) => s.name === 'evolution:advice');
-    const text = advice.text({ agent: { ctx: {} } });
-    assert.equal(text, '', 'N<3 组不产出建议，注入为空');
-    assert.ok(!records.logs.warn.some((args) => String(args).includes('system-trust 白名单')), 'N<3 组不触发 system-trust 校验');
+    assert.equal(advice.text({ agent: { ctx: {} } }), '', 'N<3 组恒空');
+    assert.ok(!records.logs.warn.some((args) => String(args).includes('system-trust 白名单')), '不触发 system-trust 校验');
+  } finally { iso.restore(); iso.teardown(); }
+});
+
+test('面板回归：renderAdviceText 仍可用且保留「仅供人类参考」面板侧文本', () => {
+  const text = renderAdviceText(
+    [{
+      profileKey: 'preset:standard',
+      performanceText: '过去 3 次：完成 1、失败 2、终止 0，近期表现分 0.333',
+      suggestion: '降',
+      confidence: 'medium',
+      cooldownUntil: 1000 + 600000,
+    }],
+    { completed: 1, failed: 2, killed: 0 }
+  );
+  assert.match(text, /仅供人类参考，不改变派发行为/, '面板侧提示文本保留');
+  assert.match(text, /过去 3 次/);
+  assert.match(text, /建议降级/);
+  assert.match(text, /置信度 中等/);
+});
+
+test('trace 门控恒 false：开关开 + orchestrator-v2 父会话 → advice_present 仍为 false', async () => {
+  const iso = makeIsolatedDshHome();
+  try {
+    const subagentsStart = async () => ({
+      result: { stopReason: 'completed', output: [{ type: 'text', text: 'ok' }] },
+      dispose: async () => {},
+    });
+    const { webServer, routes } = makeRouteHarness();
+    const agentPresets = { composedPreset: () => 'orchestrator-v2', list: async () => [{ id: 'standard', trust: 'system' }] };
+    const { ctx, records } = createFakeCtx({ services: { webServer, agentPresets }, subagentsStart });
+    await mod.apply(ctx);
+    await postAdvice(routes, true);
+    const tool = records.registerToolCalls.find((t) => t.name === 'dispatch');
+    const parent = {
+      ctx: { get: (name) => (name === 'agentPresets' ? agentPresets : undefined), tools: { schemas: () => [{ name: 'read' }] } },
+      options: {},
+      session: { header: { id: 'sess-advice-off' } },
+    };
+    const out = await tool.execute({ prompt: 'task' }, { agent: parent, signal: undefined });
+    assert.equal(out.decisionTrace.requested.advice_present, false, '模型侧下架后 advice_present 恒 false');
   } finally { iso.restore(); iso.teardown(); }
 });
 

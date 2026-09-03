@@ -241,8 +241,11 @@ test('门控解耦：apply 开关关（默认）→ 建议链开仍生成候选�
   const t = makeEngineDeps({ applyEnabled: false, adviceEnabled: true, presets: [{ id: 'standard' }, { id: 'code' }] });
   try {
     const advice = [{ profileKey: 'preset:code', suggestion: '降', confidence: 'medium', performanceText: '过去 3 次：完成 1、失败 2', cooldownUntil: Date.now() + 60000 }];
+    const first = await t.engine.generate({ advice, summaries: SUMMARIES });
+    assert.equal(first.generated.length, 0, '首次同方向建议不产候选（滞后 N=2 初值，待实测后校准）');
+    assert.equal(first.skipped[0].reason, 'lag-not-reached');
     const generated = await t.engine.generate({ advice, summaries: SUMMARIES });
-    assert.equal(generated.generated.length, 1, 'apply 开关关不影响候选生成（生成随建议链）');
+    assert.equal(generated.generated.length, 1, '连续第 2 次同方向建议才生成（apply 开关关不影响候选生成）');
     assert.equal(t.assets.get(generated.generated[0]).state, 'draft');
     const applied = await t.engine.apply({ assetId: 'evo-down-a', humanConfirmed: true });
     assert.equal(applied.ok, false, '应用写路径保持 apply 开关硬线');
@@ -280,8 +283,11 @@ test('生成：建议 → 资产落盘；同身份键幂等跳过；总量 ≥20
       getSummaries: () => SUMMARIES,
       pluginVersion: '0.0.0-test',
     });
+    const lagged = await engine2.generate({ advice, summaries: SUMMARIES });
+    assert.equal(lagged.generated.length, 0, '首轮被滞后闸抑制');
+    assert.equal(lagged.skipped[0].reason, 'lag-not-reached');
     const first = await engine2.generate({ advice, summaries: SUMMARIES });
-    assert.equal(first.generated.length, 1, '首轮生成一条');
+    assert.equal(first.generated.length, 1, '连续第 2 次同方向建议生成一条');
     assert.equal(t.assets.get(first.generated[0]).state, 'draft');
     const second = await engine2.generate({ advice, summaries: SUMMARIES });
     assert.equal(second.generated.length, 0, '同身份键未处置 → 跳过');
@@ -317,7 +323,7 @@ function writeSummariesFixture(dir, l1) {
 
 function agentPresetsStub() {
   return {
-    composedPreset: () => 'orchestrator',
+    composedPreset: () => 'orchestrator-v2',
     list: async () => [{ id: 'standard', trust: 'system' }, { id: 'code', trust: 'system' }, { id: 'minimal', trust: 'system' }],
   };
 }
@@ -338,10 +344,15 @@ test('路由集成：/list 生成候选 → /evolution/assets 可见 → /evolut
     const list = await callRoute(app.handler, 'GET', '/list');
     assert.equal(list.code, 200);
     assert.equal(list.json.advice.length, 1, '/list 返回建议');
+    assert.equal(list.json.evolutionCandidates.length, 0, '首轮同方向建议被滞后闸抑制');
+    assert.equal(list.json.evolutionStatus.canaryEnabled, true, '数据充分时金丝雀可用');
     assert.ok(list.json.adviceDetails !== null && typeof list.json.adviceDetails === 'object', '/list 下发派发明细键控表（无台账为空表）');
+    const list2 = await callRoute(app.handler, 'GET', '/list');
+    assert.equal(list2.json.evolutionCandidates.length, 1, '连续第 2 次同方向建议才生成候选');
     const assetsRes = await callRoute(app.handler, 'GET', '/evolution/assets');
     assert.equal(assetsRes.code, 200);
     assert.equal(assetsRes.json.assets.length, 1, '候选资产已生成');
+    assert.ok(Array.isArray(assetsRes.json.rollbackSuggestions), '/evolution/assets 下发回滚建议数据源（暂无 = 空表）');
     const assetId = assetsRes.json.assets[0].id;
     assert.equal(assetsRes.json.assets[0].state, 'draft');
     const applied = await callRoute(app.handler, 'POST', '/evolution/apply', { assetId, human_confirmed: true });
@@ -365,11 +376,13 @@ test('路由集成：/list 生成候选 → /evolution/assets 可见 → /evolut
 test('路由集成：apply 开关关 → 建议链开时 /list 生成候选可见；/evolution/apply 仍被拒（解耦）', async () => {
   const app = await setupApp({ applyEnabled: false, evolutionAdvice: true });
   try {
+    await callRoute(app.handler, 'GET', '/list');
     const list = await callRoute(app.handler, 'GET', '/list');
     assert.equal(list.code, 200);
     assert.equal(list.json.advice.length, 1, '/list 返回建议');
-    assert.equal(list.json.evolutionCandidates.length, 1, '候选随建议链生成并随 /list 可见');
+    assert.equal(list.json.evolutionCandidates.length, 1, '连续第 2 次同方向建议后候选随建议链生成并随 /list 可见');
     assert.equal(list.json.evolutionCandidates[0].state, 'draft');
+    assert.equal(list.json.evolutionStatus.applyEnabled, false, 'apply 开关关 → 冷启动状态 applyEnabled=false');
     const assetsRes = await callRoute(app.handler, 'GET', '/evolution/assets');
     assert.equal(assetsRes.json.assets.length, 1, '候选资产已生成');
     const applied = await callRoute(app.handler, 'POST', '/evolution/apply', { assetId: list.json.evolutionCandidates[0].id, human_confirmed: true });
@@ -408,6 +421,8 @@ function l1Group(score, n) {
 test('auto：未处置且未到期 → 幂等跳过；到期但数据没显著变化 → 保留旧候选跳过', async () => {
   const t = makeRenewalEngine();
   try {
+    const seed = await t.engine.generate({ advice: downAdvice(), summaries: t.summaries });
+    assert.equal(seed.generated.length, 0, '首轮同方向建议被滞后闸抑制');
     const first = await t.engine.generate({ advice: downAdvice(), summaries: t.summaries });
     assert.equal(first.generated.length, 1);
     const assetId = first.generated[0];
@@ -428,6 +443,7 @@ test('auto：未处置且未到期 → 幂等跳过；到期但数据没显著�
 test('auto 换代：全部到期且数据显著变化 → 旧候选 expired + 审计 + 新一代', async () => {
   const t = makeRenewalEngine();
   try {
+    await t.engine.generate({ advice: downAdvice(), summaries: SUMMARIES });
     const first = await t.engine.generate({ advice: downAdvice(), summaries: SUMMARIES });
     const assetId = first.generated[0];
     t.assets.transition(assetId, 'draft', { expiry: Date.now() - 1000 });
@@ -447,6 +463,7 @@ test('auto 换代：全部到期且数据显著变化 → 旧候选 expired + �
 test('auto + 不自动过期（ttl=0）：expiry=null 恒不过期，数据变化也不自动换代', async () => {
   const t = makeRenewalEngine({ candidateTtlH: 0 });
   try {
+    await t.engine.generate({ advice: downAdvice(), summaries: SUMMARIES });
     const first = await t.engine.generate({ advice: downAdvice(), summaries: SUMMARIES });
     assert.equal(t.assets.get(first.generated[0]).expiry, null, '不自动过期档 expiry=null');
     const changed = { ...t.summaries, l1: l1Group(0.1, 9) };
@@ -459,6 +476,7 @@ test('auto + 不自动过期（ttl=0）：expiry=null 恒不过期，数据变�
 test('manual：生成后不自动换代（数据变化也不产新）；expiry 恒 null；regenerate 一次性刷新', async () => {
   const t = makeRenewalEngine({ candidateMode: 'manual', candidateTtlH: 24 });
   try {
+    await t.engine.generate({ advice: downAdvice(), summaries: SUMMARIES });
     const first = await t.engine.generate({ advice: downAdvice(), summaries: SUMMARIES });
     const assetId = first.generated[0];
     assert.equal(t.assets.get(assetId).expiry, null, '手动维护等效不自动过期');
