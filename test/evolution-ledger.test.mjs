@@ -18,6 +18,11 @@ import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
 
 const mod = await import('../index.mjs');
 
+// 台账记录的 plugin_version 与包版本同源（readPluginVersion），断言动态读取，
+// 版本号 bump 时不再需要同步改测试。
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const PKG_VERSION = pkg.version;
+
 // --- 纯工厂：临时目录下的 createEvolutionLedger ---------------------------------
 
 function tmpLedgerDir() {
@@ -180,7 +185,7 @@ test('execute foreground completed：dispatch.jsonl 追加一条含全 schema �
     assert.equal(record.origin, 'subagent');
     assert.equal(record.source, 'system');
     assert.match(record.provenance, /^dispatch:v\d/);
-    assert.equal(record.plugin_version, '0.4.0');
+    assert.equal(record.plugin_version, PKG_VERSION);
     assert.equal(typeof record.ts, 'number');
     // 结构指纹不含 prompt 原文。
     assert.equal(typeof record.task.len, 'number');
