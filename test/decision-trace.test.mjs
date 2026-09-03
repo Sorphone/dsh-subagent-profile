@@ -32,10 +32,10 @@ const mod = await import('../index.mjs');
 // ---- createDecisionTrace 骨架 --------------------------------------------------
 
 test('createDecisionTrace：骨架含 version/startedAt/parentContext/requested/gates 与三占位', () => {
-  const trace = createDecisionTrace({ parentPreset: 'orchestrator' }, { profile: 'researcher' }, 123);
+  const trace = createDecisionTrace({ parentPreset: 'orchestrator-v2' }, { profile: 'researcher' }, 123);
   assert.equal(trace.version, 1);
   assert.equal(trace.startedAt, 123);
-  assert.deepEqual(trace.parentContext, { parentPreset: 'orchestrator' });
+  assert.deepEqual(trace.parentContext, { parentPreset: 'orchestrator-v2' });
   assert.deepEqual(trace.requested, { profile: 'researcher' });
   assert.deepEqual(trace.gates, []);
   assert.equal(trace.effective, undefined);
@@ -153,6 +153,25 @@ test('requestedOf：超长 prompt 摘要截断 200 字符 + 截断标记，原�
   assert.equal(out.prompt_excerpt, 'x'.repeat(200));
   assert.equal(out.prompt_truncated, true, '带截断标记');
   assert.equal(out.prompt, undefined, '原文仍不进 requested');
+});
+
+test('requestedOf：字段双名——对外显示官方名 reasoning_effort，内部记录键 reasoningEffort 保持', () => {
+  // 只传官方名：内部键记归一后值（客户端读取方可用），对外官方键同值。
+  const snake = requestedOf({ prompt: 't', reasoning_effort: 'high' });
+  assert.equal(snake.reasoning_effort, 'high', 'requested 对外显示官方名');
+  assert.equal(snake.reasoningEffort, 'high', '内部记录键保持（值归一）');
+  // 只传旧名：内部键与官方键同值。
+  const camel = requestedOf({ prompt: 't', reasoningEffort: 'low' });
+  assert.equal(camel.reasoning_effort, 'low', '旧名请求同样对外显示官方名');
+  assert.equal(camel.reasoningEffort, 'low', '内部记录键保持');
+  // 同送两义：两值并留（内=camel、外=snake），交 fail-loud 拒绝。
+  const both = requestedOf({ prompt: 't', reasoning_effort: 'high', reasoningEffort: 'low' });
+  assert.equal(both.reasoning_effort, 'high', '官方键记录官方名实际值');
+  assert.equal(both.reasoningEffort, 'low', '内部键记录旧名实际值');
+  // 未请求：两键均 undefined（assertTraceSize 的 stripUndefined 清理）。
+  const none = requestedOf({ prompt: 't' });
+  assert.equal(none.reasoning_effort, undefined);
+  assert.equal(none.reasoningEffort, undefined);
 });
 
 test('effectiveMeta：组装生效值 + ignored 列表', () => {
@@ -517,7 +536,7 @@ test('execute render 行：DISPATCH_RENDER 输出不含 decisionTrace 内容（�
     const { ctx, records } = createFakeCtx();
     await mod.apply(ctx);
     const tool = dispatchTool(records);
-    const trace = createDecisionTrace({ parentPreset: 'orchestrator' }, { profile: 'researcher' });
+    const trace = createDecisionTrace({ parentPreset: 'orchestrator-v2' }, { profile: 'researcher' });
     recordGate(trace, { name: 'whitelist', input: { requestedPreset: 'standard' }, output: { allowed: true }, verdict: 'pass' });
     const value = {
       kind: 'foreground', output: 'done', profile: 'p', preset: 'inherit', provider: 'pr', model: 'm',
@@ -531,14 +550,19 @@ test('execute render 行：DISPATCH_RENDER 输出不含 decisionTrace 内容（�
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('execute presentationMeta：投影返回值 === value.decisionTrace', async () => {
+test('execute presentationMeta：投影 = decisionTrace + imageText（trace 本体不被改写）', async () => {
   const iso = makeIsolatedDshHome();
   try {
     const { ctx, records } = createFakeCtx();
     await mod.apply(ctx);
     const tool = dispatchTool(records);
     const trace = createDecisionTrace({}, {});
-    assert.equal(tool.output.presentationMeta({}, { decisionTrace: trace }), trace);
+    const before = structuredClone(trace);
+    const value = { decisionTrace: trace, imageText: '方案 p；继承父；档位 cheap' };
+    const meta = tool.output.presentationMeta({}, value);
+    assert.equal(meta.imageText, value.imageText, 'imageText 必须随 presentationMeta 投影');
+    assert.deepEqual(meta.gates, trace.gates, '轨迹键随投影保留');
+    assert.deepEqual(trace, before, '原始 trace 不得被投影改写');
   } finally { iso.restore(); iso.teardown(); }
 });
 

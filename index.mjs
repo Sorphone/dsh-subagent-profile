@@ -1,7 +1,5 @@
 // index.mjs — dsh-subagent-profile 宿主侧插件 bundle（只做装配）。宿主导入面收敛在
-// lib/core/shims.mjs，装配块按模块拆分驻留 lib/core/；apply 的装配辅助函数保持
-// section 文本与门控逐字不变，`enabled` 始终经 getter 注入（门控读取当前值）。
-
+// lib/core/shims.mjs，装配块按模块拆分驻留 lib/core/；`enabled` 经 getter 实时读取。
 import { readdirSync, renameSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -22,14 +20,17 @@ import { createDraftsStore } from './lib/core/drafts-store.mjs';
 import { assessDraftProfile } from './lib/core/draft-gates.mjs';
 import { createEscapeStore, recordEscapeAllowProvider } from './lib/core/escape.mjs';
 import { resolveWhitelist, FALLBACK_WHITELIST } from './lib/core/whitelist.mjs';
-import { profileDirectoryRows, profileStatsFromSummaries, applyProfileStats } from './lib/core/profile-directory.mjs';
-import { buildAdviceText, refreshSummaries, readSummaries } from './lib/core/evolution-advice.mjs';
+import { readModelSelectionPolicy } from './lib/core/model-policy.mjs';
+import { profileSectionText } from './lib/core/profile-directory.mjs';
+import { createProfilesQueryTool } from './lib/core/profiles-query.mjs';
+import { budgetSectionText } from './lib/core/dispatch-gates.mjs';
+import { refreshSummaries } from './lib/core/evolution-advice.mjs';
 import { createEvolutionAssembly } from './lib/core/evolution-engine.mjs';
 
 export const name = 'dsh-subagent-profile';
 export const inject = ['subagents', 'tools', 'agents'];
 
-// 自装 bundled 的 "orchestrator" 预设到 agent-presets 根（与官方自安装相同）。
+// 自装 bundled 的 "orchestrator-v2" 预设到 agent-presets 根（与官方自安装相同）。
 // 幂等：字节一致跳过、bundle 变更重写；fail-soft：写入被拒时工具与设置页照常工作。
 function syncBundledPresetsToHome(ctx) {
   try {
@@ -37,21 +38,21 @@ function syncBundledPresetsToHome(ctx) {
     const sync = syncBundledPresets(presetRoot);
     for (const { id, error } of sync.failed) ctx.logger.warn(`[dsh-subagent-profile] preset ${id} sync failed: ${error}`);
     if (sync.synced.length > 0) ctx.logger.info(`[dsh-subagent-profile] presets synced into ${presetRoot}: ${sync.synced.join(', ')}`);
+    if (sync.archived.length > 0) ctx.logger.info(`[dsh-subagent-profile] legacy preset archived into ${presetRoot}: ${sync.archived.join(', ')}`);
     if (sync.userModified.length > 0) ctx.logger.warn(`[dsh-subagent-profile] presets left untouched (user-modified): ${sync.userModified.join(', ')}`);
   } catch (error) {
     ctx.logger.warn('[dsh-subagent-profile] preset sync failed:', error instanceof Error ? error.message : String(error));
   }
 }
 
-// 卸载清理：本插件 3 个数据文件 + orchestrator 预设目录改名备份（effect 清理器
-// 在禁用/热重载/退出时都可能触发，硬删除会静默丢用户数据）。备份保留可恢复副本；
-// 规范路径清空后重启按需重建。fail-soft：改名失败不抛。
+// 卸载清理：本插件 3 个数据文件 + orchestrator-v2 预设目录改名备份（effect 清理器
+// 在禁用/热重载/退出时都可能触发；硬删除会静默丢用户数据）。fail-soft：改名失败不抛。
 function removeOwnedData(home) {
   const stamp = Date.now();
   for (const file of ['subagent-profiles.json', 'subagent-profiles.state.json', 'subagent-profiles.failed-traces.json']) {
     try { renameSync(join(home, file), join(home, `${file}.removed-${stamp}`)); } catch { /* 源不存在（正常首启）等：best effort */ }
   }
-  try { renameSync(join(home, '.agent-presets', 'orchestrator'), join(home, '.agent-presets', `orchestrator.removed-${stamp}`)); } catch { /* best effort */ }
+  try { renameSync(join(home, '.agent-presets', 'orchestrator-v2'), join(home, '.agent-presets', `orchestrator-v2.removed-${stamp}`)); } catch { /* best effort */ }
 }
 
 // 启动清理 .removed-* 备份残留（只清本插件前缀，防热重载反复产生新备份积累）；
@@ -64,7 +65,7 @@ function cleanRemovedBackups(home) {
       try {
         if (name.startsWith('subagent-profiles.') && name.includes('.removed-')) {
           rmSync(join(dir, name), { force: true });
-        } else if (name.startsWith('orchestrator.removed-')) {
+        } else if (name.startsWith('orchestrator-v2.removed-')) {
           rmSync(join(dir, name), { recursive: true, force: true });
         }
       } catch { /* best effort */ }
@@ -82,16 +83,16 @@ function setupAdoptionTracker(ctx, home, getRefreshAdvice, onUnadopted) {
     onDecision: () => { try { getRefreshAdvice()(); } catch { /* 聚合重算失败不影响判定（fail-soft） */ } },
     onDecided: onUnadopted,
   });
-  const onSessionEvent = (session, event) => adoptionTracker.handleEvent(session, event);
-  ctx.on('session/event', onSessionEvent);
+  const onSessionEvent = (session, event) => adoptionTracker.handleEvent(session, event); ctx.on('session/event', onSessionEvent);
   ctx.effect(() => () => { ctx.off('session/event', onSessionEvent); adoptionTracker.dispose(); });
   return adoptionTracker;
 }
 
 // 卸载接线：注销工具 + 清空台账 + 级联取消 + 删数据文件与预设目录。agent/disposed
 // 挂钩按父释放并发/token 记账，并把该父会话未决采纳判定判「明确未采纳」。
-function registerTeardown(ctx, dispatch, ledger, guard, home, backgroundLedger, adoptionTracker) {
+function registerTeardown(ctx, dispatch, profilesQuery, ledger, guard, home, backgroundLedger, adoptionTracker) {
   ctx.effect(() => dispatch.dispose);
+  ctx.effect(() => profilesQuery.dispose);
   ctx.effect(() => ledger.clear);
   ctx.effect(() => backgroundLedger.clear);
   ctx.effect(() => () => {
@@ -101,10 +102,7 @@ function registerTeardown(ctx, dispatch, ledger, guard, home, backgroundLedger, 
   });
   const onAgentDisposed = ({ agent }) => {
     const parentSessionId = agent?.session?.header?.id;
-    if (parentSessionId !== undefined && parentSessionId !== null && parentSessionId !== '') {
-      guard.resetParent(parentSessionId);
-      adoptionTracker.parentDisposed(parentSessionId);
-    }
+    if (parentSessionId !== undefined && parentSessionId !== null && parentSessionId !== '') { guard.resetParent(parentSessionId); adoptionTracker.parentDisposed(parentSessionId); }
   };
   ctx.on('agent/disposed', onAgentDisposed);
   ctx.effect(() => () => ctx.off('agent/disposed', onAgentDisposed));
@@ -139,56 +137,45 @@ function provideProfileService(ctx, store) {
   });
 }
 
-// 系统提示门控：两段 profile-mode section 只在当前会话 Agent 是编排者预设
-// （orchestrator）时注入，从而消除从 standard/code/minimal 等不派发会话上的
-// 每请求固定泄漏。判据（以源码为准确认，见 test/README.md）：主判据
-// composedPreset(agentCtx)==='orchestrator'；否决 schemas(agent) 明确不含
-// dispatch → 必空；回退 无 agentPresets → 保守不注入。
-function sectionGatePasses(ctx, getEnabled, context) {
+// 系统提示门控（门控拆分）：dispatch:profiles 按「能力」判据（schemas 含 dispatch 即注入）；
+// orchestrator:mode / dispatch:budget 保持「模式」判据（composedPreset==='orchestrator-v2'）。禁止成对放宽共享 gate。
+// evolution:advice 自本轮起模型侧恒空（下架），不挂任何注入门控——见注册处注释。
+function profileSectionGate(ctx, getEnabled, context) {
   if (!getEnabled()) return false;
-  // 否决（防御性）：schemas(agent) 明确不含 dispatch → 必空。
+  // schemas(agent) 明确不含 dispatch → 必空（否决）；缺失 → 注入机会 + debug。
   if (context !== undefined && context.agent !== undefined) {
     const schemas = ctx.tools.schemas(context.agent);
-    if (Array.isArray(schemas) && !schemas.some((s) => s && s.name === 'dispatch')) {
-      return false;
-    }
+    if (Array.isArray(schemas)) return schemas.some((s) => s && s.name === 'dispatch');
   }
-  // 主判据：preset 特征 —— composedPreset(agentCtx) === 'orchestrator'。
+  if (ctx.logger !== undefined && typeof ctx.logger.debug === 'function') {
+    ctx.logger.debug('[dsh-subagent-profile] dispatch:profiles 门控：schemas 不可用，按注入机会处理');
+  }
+  return true;
+}
+// 编排者专属 gate：与 0.4.0 原判据一致（enabled + 否决 + composedPreset，预设名随 V2 收编更新为 orchestrator-v2）。
+function orchestrationGate(ctx, getEnabled, context) {
+  if (!getEnabled()) return false;
+  if (context !== undefined && context.agent !== undefined) {
+    const schemas = ctx.tools.schemas(context.agent);
+    if (Array.isArray(schemas) && !schemas.some((s) => s && s.name === 'dispatch')) return false;
+  }
+  // 主判据：preset 特征 —— composedPreset(agentCtx) === 'orchestrator-v2'（精确匹配新名；旧名 orchestrator 已由 V2 收编取代，不构成注入判据）。
   const agentPresets = ctx.get('agentPresets');
   if (agentPresets !== undefined && typeof agentPresets.composedPreset === 'function') {
     const agentCtx = context !== undefined && context.agent !== undefined && context.agent.ctx !== undefined
       ? context.agent.ctx
       : ctx;
-    try { return agentPresets.composedPreset(agentCtx) === 'orchestrator'; }
+    try { return agentPresets.composedPreset(agentCtx) === 'orchestrator-v2'; }
     catch { return false; }
   }
   // 无 agentPresets → 无法判别 → 保守不注入。
   return false;
 }
 
-// dispatch:profiles section 文本。引号引用：description 套引号；为空时显示
-// 占位符（不套引号）。压平在存储层完成（sanitizeProfile），此处仅负责显示层包裹。
-// 门控 profiles section 内附一行行为规则提示（非开放的 persona 注入）。
-function profileSectionText(store, gate, context, summaries) {
-  if (!gate(context)) return '';
-  const rows = applyProfileStats(profileDirectoryRows(store), profileStatsFromSummaries(store, summaries));
-  if (rows.length === 0) return '';
-  const lines = rows.map((p) => {
-    const desc = p.description.length > 0 ? `"${p.description}"` : '(无描述)';
-    const meta = [];
-    if (p.preset !== undefined) meta.push(`preset: ${p.preset}`);
-    else if (p.model !== undefined) meta.push(`model: ${p.model}`);
-    if (p.tokenTier !== undefined) meta.push(`tier: ${p.tokenTier}`);
-    if (p.avgCost !== undefined) meta.push(`平均 ${p.avgCost} 元/次`);
-    if (p.successRate !== undefined) meta.push(`成功率 ${p.successRate}${p.n !== undefined ? ` (N=${p.n})` : ''}`);
-    return `- ${p.id}: ${desc}${meta.length > 0 ? ` (${meta.join(' · ')})` : ''}`;
-  });
-  const note = '- 选择方案时先匹配任务复杂度与方案描述的能力边界，成本只在能力都胜任的方案之间比较——复杂任务不得为省 token 改用能力不足的便宜方案。\n- 别把 1-2 步即可自查/可搜完的小事委派出去 —— 几分钟内能自查完的直接做。\n- 优先使用已保存的 profile；只有少数字段需要临时覆盖时才传 per-call 参数。查资料/汇总/读文件等轻任务优先 cheap 或 flash。';
-  return `Available dispatch profiles (dispatch.profile):\n${lines.join('\n')}\n${note}`;
-}
-
-// orchestrator:mode section 文本（逐字保留；与 profiles 同门控）。
-const ORCHESTRATOR_MODE_TEXT = '本机已安装 dsh-subagent-profile 插件的「编排者模式」agent preset：新建会话的预设选择器中可选「编排者模式」。该模式把 Agent 定位为主协调者——拆解任务后按场景用 dispatch（内置 swap-standard=标准编码、researcher=调研检索，可在「子 Agent 方案」设置页自定义）与 subagent/subagent_fork/workflow 委派给子 Agent，再整合结果。preset 文件由插件维护于 ~/.dsh/.agent-presets，安装/升级时自动同步；用户提到「编排者模式 / orchestrator / 主协调模式」时即指本预设，请据此协作。';
+// orchestrator:mode section 文本（编排者模式 V2 定稿文案；与 profiles 同门控。
+// 追加官方错误对照句：官方全英文报错补中文行动引导，与 dispatch 的 stopReason
+// 映射共同构成错误闭环）。
+const ORCHESTRATOR_MODE_TEXT = '本机已安装「编排者模式 V2」agent 预设（字段 orchestrator-v2）：新建会话可选。把自己定位为主协调者——拆解任务后用 dispatch（方案）或官方 subagent/workflow 委派子 Agent，再整合结果；第一期采用 Minimal 双工具锚定轨迹，稳定后升满编排能力。需要 1-2 步自查的小事直接自己干，别派；方案在「子 Agent 方案」设置页管理。官方子代理工具若报 “not allowed for this Session”，意为该模型不在本会话白名单——改用 list_subagent_models 查允许路由，或转用 dispatch（profile）。';
 
 // 建议注入候选池：受信任预设白名单（解析失败回退内置名单）。不叠加逃生舱放行集。
 async function resolveAdviceWhitelist(ctx) {
@@ -199,61 +186,58 @@ async function resolveAdviceWhitelist(ctx) {
   }
 }
 
-async function setupEvolution(ctx, home, store, catalog, evoLedger, getEvolutionAdvice) {
+// 回滚建议提醒 mint：仅 regress 判定时触发一次（提醒写失败吞掉）；标题人话化，
+// 内容引导到自进化与建议页签查看建议（只读跳转）。
+async function setupEvolution(ctx, home, store, catalog, evoLedger, getEvolutionAdvice, getReminderStore) {
   const adviceWhitelist = await resolveAdviceWhitelist(ctx);
   const adviceEnv = { summariesFile: join(home, 'subagent-evolution', 'summaries.json'), dispatchFile: join(home, 'subagent-evolution', 'dispatch.jsonl'), whitelist: adviceWhitelist, logger: ctx.logger, onLoss: () => evoLedger.markMigrationLoss() };
-  const { adviceSource, evolution } = createEvolutionAssembly({ ctx, home, store, catalog, evoLedger, adviceWhitelist, getEvolutionAdvice, pluginVersion: readPluginVersion() });
+  const mintRollbackReminder = (asset) => mintReminder(getReminderStore(), {
+    severity: 'P2', kind: 'suggestion-rollback',
+    title: '自进化撤销建议：' + ((asset && asset.applied_config && typeof asset.applied_config.name === 'string' && asset.applied_config.name !== '') ? asset.applied_config.name : ((asset && typeof asset.name === 'string' && asset.name !== '') ? asset.name : '未知方案')),
+    detail: '该方案调整后观察期表现下降，建议撤销。可在「自进化与建议」页签查看并处理。', sessionId: null,
+  });
+  const { adviceSource, evolution } = createEvolutionAssembly({ ctx, home, store, catalog, evoLedger, adviceWhitelist, getEvolutionAdvice, getReminderStore: mintRollbackReminder, pluginVersion: readPluginVersion() });
   return { adviceEnv, adviceSource, evolution };
 }
 
-// 系统提示各 section：门控经 sectionGatePasses；`enabled` 经 getter 实时读取。
+// 系统提示各 section：profiles 段挂 profileSectionGate（能力判据），orchestrator:mode
+// 与 dispatch:budget 挂 orchestrationGate（模式判据，编排者专属）；evolution:advice
+// 自本轮起模型侧恒空（下架，见注册处注释）。`enabled` 经 getter 实时读取。
 function registerSystemPromptSections(ctx, store, getEnabled, getEvolutionAdvice, adviceEnv, guard) {
   const pluginSystemPrompt = ctx.get('systemPrompt');
   if (pluginSystemPrompt === undefined) return;
-  const gate = (context) => sectionGatePasses(ctx, getEnabled, context);
+  const profileGate = (context) => profileSectionGate(ctx, getEnabled, context);
+  const orchestratorGate = (context) => orchestrationGate(ctx, getEnabled, context);
   pluginSystemPrompt.section({
     name: 'dispatch:profiles',
     order: 116.5,
-    text: (context) => {
-      let summaries = null;
-      try { summaries = readSummaries(adviceEnv.summariesFile, adviceEnv.logger, { onLoss: adviceEnv.onLoss }); } catch { /* 统计只增强，不影响目录注入 */ }
-      return profileSectionText(store, gate, context, summaries);
-    },
+    text: (context) => profileSectionText(store, profileGate, context),
   });
-  // 宣告自装的 orchestrator 预设，让当前 agent 知道该模式存在、可引导用户使用。
-  // 门控与 profiles 段相同——只有可派发的 agent 才看得到。
+  // 宣告自装的 orchestrator-v2 预设（门控与 0.4.0 相同：仅编排者 agent 可见）。
   pluginSystemPrompt.section({
     name: 'orchestrator:mode',
     order: 117,
-    text: (context) => (gate(context) ? ORCHESTRATOR_MODE_TEXT : ''),
+    text: (context) => (orchestratorGate(context) ? ORCHESTRATOR_MODE_TEXT : ''),
   });
-  // 派发优化建议段：门控 = orchestrator + evolutionAdvice 开关；异常兜底不阻断装配。
+  // 派发优化建议段（模型侧下架）：建议文本曾注入模型可见面却自称「仅供人类
+  // 参考」——噪声 + 诱导降档，故恒不注入（text 恒 ''，不再过任何门控/开关）。
+  // 注册结构保留（section 名与 order 不变，客户端依赖其存在性）；人类面板
+  // （建议卡/提醒中心/审计行）经 http-routes 读取同一数据源，不受影响。勿在此恢复注入。
   pluginSystemPrompt.section({
     name: 'evolution:advice',
     order: 116.8,
-    text: (context) => {
-      if (!getEvolutionAdvice() || !gate(context)) return '';
-      try {
-        return buildAdviceText(adviceEnv);
-      } catch (error) {
-        // 候选校验失败（如逃生舱放行的非 system 预设）不再静默空转——logger.warn
-        // 留痕 + 注入段标注「建议暂不可用及原因」，父 Agent 可见、派发行为不受影响。
-        const reason = error instanceof Error ? error.message : String(error);
-        adviceEnv.logger.warn(`[dsh-subagent-profile] evolution:advice 生成失败：${reason}`);
-        return `（派发优化建议暂不可用：${reason}。派发行为不受影响。）`;
-      }
-    },
+    text: () => '',
   });
-  // 派发预算余量段：与 profiles 同门控；无父 sessionId 不注入（无法关联具体会话）。
+  // 派发预算余量段（三态文案，见 dispatch-gates.mjs）：门控 = orchestrator-v2 预设；
+  // 无父 sessionId 不注入（无法关联具体会话）。
   pluginSystemPrompt.section({
     name: 'dispatch:budget',
     order: 116.7,
     text: (context) => {
-      if (!gate(context)) return '';
+      if (!orchestratorGate(context)) return '';
       const parentSessionId = context?.agent?.session?.header?.id;
       if (typeof parentSessionId !== 'string' || parentSessionId === '') return '';
-      const b = guard.snapshot(parentSessionId);
-      return `派发预算余量：本会话在途 ${b.concurrency}/${b.maxConcurrent}，累计 token ${b.tokens}/${b.maxParentTokens}，剩余 ${Math.max(0, b.maxParentTokens - b.tokens)} token。`;
+      return budgetSectionText(guard.snapshot(parentSessionId));
     },
   });
 }
@@ -357,6 +341,20 @@ function createDispatch(ctx, store, catalog, ledger, guard, evoLedger, backgroun
   });
 }
 
+// profiles_query 工具装配（apply 前抽出）：syncTool 机制自动可见、不依赖静态段；
+// 与 dispatch 共用 enabled 开关（/set-enabled 一并注册/注销）。
+function createProfilesQuery(ctx, store, catalog, adviceEnv, getEnabled) {
+  return createProfilesQueryTool({
+    register: (tool) => ctx.tools.register(tool),
+    store,
+    catalog,
+    summariesFile: adviceEnv.summariesFile,
+    onLoss: adviceEnv.onLoss,
+    logger: ctx.logger,
+    getEnabled,
+  });
+}
+
 // auto-profile 落库：三道安全检查评估（draft-gates）→ 任一 fail 即 throw → 落库 + 审计。
 async function applyDraftProfile({ ctx, store, catalog, getEscapeSet, evoLedger, draft }) {
   const { ok, checks, clean } = await assessDraftProfile({ ctx, store, catalog, getEscapeSet, draft });
@@ -364,15 +362,14 @@ async function applyDraftProfile({ ctx, store, catalog, getEscapeSet, evoLedger,
     const failed = checks.find((c) => c.verdict === 'fail');
     throw new Error(failed !== undefined && typeof failed.reason === 'string' ? failed.reason : 'draft 未通过安全检查');
   }
-  store.profiles.set(clean.id, { ...clean, persisted: true });
+  store.saveProfile({ ...clean, persisted: true });
   const persisted = store.persistProfiles();
   evoLedger.recordGovernanceAudit({ kind: 'draft-apply', profileId: clean.id, source: typeof draft.source === 'string' ? draft.source : 'human' });
   return { id: clean.id, persisted: persisted.persisted };
 }
 
 export async function apply(ctx) {
-  const home = dshHome();
-  cleanRemovedBackups(home); // 上个生命周期留下的 .removed-* 备份残留。
+  const home = dshHome(); cleanRemovedBackups(home); // 上个生命周期留下的 .removed-* 备份残留。
   // reminderStore 变量提前声明：evoLedger.onAlert 与 escape mint 钩子延迟读取。
   let reminderStore;
   // 派发台账 + 审计分级须在 store 之前构造：store 的治理审计钩子指向其 markGovernanceFailure。
@@ -382,7 +379,6 @@ export async function apply(ctx) {
   let enabled = store.loadEnabled();
   let evolutionAdvice = store.loadEvolutionAdvice();
   store.loadProfiles();
-  // 自装 bundled 的 orchestrator 预设（幂等、fail-soft）。
   syncBundledPresetsToHome(ctx);
   const catalog = createSharedCatalog(ctx);
   const ledger = createFailureLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`), stateFile: join(home, 'subagent-profiles.failed-traces.json') });
@@ -390,16 +386,16 @@ export async function apply(ctx) {
   const backgroundLedger = createBackgroundLedger({ warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
   const draftsStore = createDraftsStore({ dshHome: home, onGovernanceFailure: () => evoLedger.markGovernanceFailure() });
   reminderStore = createReminderStore({ dshHome: home, audit: (entry) => evoLedger.recordGovernanceAudit(entry), warn: (message) => ctx.logger.warn(`[dsh-subagent-profile] ${message}`) });
-  let refreshAdvice = () => {};
-  const adoptionTracker = setupAdoptionTracker(ctx, home, () => refreshAdvice, (rec) => mintUnadoptedReminder(reminderStore, evoLedger, rec));
+  let refreshAdvice = () => {}; const adoptionTracker = setupAdoptionTracker(ctx, home, () => refreshAdvice, (rec) => mintUnadoptedReminder(reminderStore, evoLedger, rec));
   const dispatch = createDispatch(ctx, store, catalog, ledger, guard, evoLedger, backgroundLedger, adoptionTracker, escapeCtl.getEscapeSet, () => enabled, () => evolutionAdvice);
   provideProfileService(ctx, store);
-  const { adviceEnv, adviceSource, evolution } = await setupEvolution(ctx, home, store, catalog, evoLedger, () => evolutionAdvice);
-  // 生产聚合触发点（T1 修复）：/options/refresh 与 /list 触发的惰性重算；parent_adopted
-  // 的「已确认未采纳」计数经 opts 惰性 join 进 weighted_success（-0.3 惩罚）。
+  const { adviceEnv, adviceSource, evolution } = await setupEvolution(ctx, home, store, catalog, evoLedger, () => evolutionAdvice, () => reminderStore);
+  const profilesQuery = createProfilesQuery(ctx, store, catalog, adviceEnv, () => enabled);
+  const syncTools = () => { dispatch.syncTool(); profilesQuery.syncTool(); };
+  // 生产聚合触发点（T1 修复）：/options/refresh 与 /list 的惰性重算。
   refreshAdvice = () => refreshSummaries({ dispatchFile: adviceEnv.dispatchFile, summariesFile: adviceEnv.summariesFile, logger: ctx.logger, opts: { parentAdoptedConfirmedFalse: adoptionTracker.confirmedFalseCounts() } });
   registerSystemPromptSections(ctx, store, () => enabled, () => evolutionAdvice, adviceEnv, guard);
-  const disposeProvider = createProfileProvider({ subagents: ctx.subagents, store, getEnabled: () => enabled, logger: ctx.logger, catalog, getEscapeSet: escapeCtl.getEscapeSet, recordEscapeAllowProvider: escapeCtl.recordEscapeAllowProvider });
+  const disposeProvider = createProfileProvider({ subagents: ctx.subagents, store, getEnabled: () => enabled, logger: ctx.logger, catalog, getEscapeSet: escapeCtl.getEscapeSet, recordEscapeAllowProvider: escapeCtl.recordEscapeAllowProvider, readModelSelectionPolicy, evoLedger });
   if (typeof disposeProvider === 'function') ctx.effect(() => disposeProvider);
   const applyDraft = (draft) => applyDraftProfile({ ctx, store, catalog, getEscapeSet: escapeCtl.getEscapeSet, evoLedger, draft });
   // /draft/preview：只读安全检查预览（不落库）。body 为 {config, name, description, source}。
@@ -415,7 +411,6 @@ export async function apply(ctx) {
       source: body !== null && typeof body === 'object' && typeof body.source === 'string' ? body.source : 'human',
     },
   });
-  // Client 设置 UI 的 HTTP loopback 路由 —— lib/core/http-routes.mjs。
-  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, dispatch.syncTool, catalog, ledger, backgroundLedger, draftsStore, applyDraft, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice, join(home, 'subagent-evolution', 'summaries.json'), adviceEnv.dispatchFile, adviceEnv.whitelist, previewDraft, reminderStore, adviceSource, evolution);
-  registerTeardown(ctx, dispatch, ledger, guard, home, backgroundLedger, adoptionTracker);
+  registerSettingsRoutes(ctx, store, () => enabled, (next) => { enabled = next; }, syncTools, catalog, ledger, backgroundLedger, draftsStore, applyDraft, () => evoLedger.auditState(), () => evolutionAdvice, (next) => { evolutionAdvice = next; }, escapeCtl.getEscapeEnabled, escapeCtl.setEscapeEnabled, escapeCtl.escape, refreshAdvice, join(home, 'subagent-evolution', 'summaries.json'), adviceEnv.dispatchFile, adviceEnv.whitelist, previewDraft, reminderStore, adviceSource, evolution);
+  registerTeardown(ctx, dispatch, profilesQuery, ledger, guard, home, backgroundLedger, adoptionTracker);
 }

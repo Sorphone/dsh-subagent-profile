@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createDispatchGuard } from '../lib/core/dispatch-guard.mjs';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
@@ -206,7 +206,7 @@ test('execute token 超限：累计达标后拒绝新派发（前台结算记账
     const out = await tool.execute({ prompt: 'task' }, { agent: parent, signal: undefined });
     assert.equal(out.childTotalTokens, 300000);
     await assert.rejects(
-      () => tool.execute({ prompt: 'task 2' }, { agent: parent, signal: undefined }),
+      () => tool.execute({ prompt: 'task 2', tokenTier: 'cheap' }, { agent: parent, signal: undefined }),
       /累计派发 token 已达上限 200000/
     );
   } finally { iso.restore(); iso.teardown(); }
@@ -247,7 +247,7 @@ test('execute 后台结算记账：onSettled 释放 + recordTokens（超限后�
     assert.equal(settled.childTotalTokens, 300000);
     // 结算后累计 token 已达标 → 下次派发拒绝（证明 onSettled 记账 + 释放）。
     await assert.rejects(
-      () => tool.execute({ prompt: 'task 2' }, { agent: parent, signal: undefined }),
+      () => tool.execute({ prompt: 'task 2', tokenTier: 'cheap' }, { agent: parent, signal: undefined }),
       /累计派发 token 已达上限 200000/
     );
   } finally { iso.restore(); iso.teardown(); }
@@ -321,7 +321,7 @@ test('execute 管理面：禁用后 GET /list 可达、set-enabled 可重开', a
   } finally { iso.restore(); iso.teardown(); }
 });
 
-test('execute 卸载：清 3 数据文件 + orchestrator 目录，不碰其它目录', async () => {
+test('execute 卸载：清 3 数据文件 + orchestrator-v2 目录，不碰其它目录', async () => {
   const iso = makeIsolatedDshHome();
   try {
     const { ctx, records } = createFakeCtx();
@@ -332,8 +332,8 @@ test('execute 卸载：清 3 数据文件 + orchestrator 目录，不碰其它�
     }
     const otherDir = join(iso.dir, '.agent-presets', 'other-plugin');
     mkdirSync(otherDir, { recursive: true });
-    const orchDir = join(iso.dir, '.agent-presets', 'orchestrator');
-    assert.ok(existsSync(orchDir), 'apply 已自装 orchestrator 预设目录');
+    const orchDir = join(iso.dir, '.agent-presets', 'orchestrator-v2');
+    assert.ok(existsSync(orchDir), 'apply 已自装 orchestrator-v2 预设目录');
     // 卸载语义 = 全部 effect disposers 依次执行（含守卫清理/清文件、off 挂钩等；
     // 不依赖 effect 注册顺序的位置性假设）。
     for (const effect of records.effects) {
@@ -342,7 +342,10 @@ test('execute 卸载：清 3 数据文件 + orchestrator 目录，不碰其它�
     for (const file of ['subagent-profiles.json', 'subagent-profiles.state.json', 'subagent-profiles.failed-traces.json']) {
       assert.ok(!existsSync(join(iso.dir, file)), `${file} 必须被卸载清理删除`);
     }
-    assert.ok(!existsSync(orchDir), 'orchestrator 预设目录必须被删除');
+    assert.ok(!existsSync(orchDir), 'orchestrator-v2 预设目录必须被删除');
+    // 卸载是改名备份（orchestrator-v2.removed-<stamp>），数据不硬删、可恢复。
+    const backups = readdirSync(join(iso.dir, '.agent-presets')).filter((e) => e.startsWith('orchestrator-v2.removed-'));
+    assert.equal(backups.length, 1, '卸载必须留下 orchestrator-v2.removed-<stamp> 改名备份');
     assert.ok(existsSync(otherDir), '非本插件目录不被删除');
   } finally { iso.restore(); iso.teardown(); }
 });
@@ -405,7 +408,7 @@ test('execute agent/disposed：父会话结束时按父释放记账（token 超�
     const first = await tool.execute({ prompt: 'x' }, { agent: makeParent('parent-d'), signal: undefined });
     assert.equal(first.stopReason, 'completed');
     await assert.rejects(
-      () => tool.execute({ prompt: 'y' }, { agent: makeParent('parent-d'), signal: undefined }),
+      () => tool.execute({ prompt: 'y', tokenTier: 'cheap' }, { agent: makeParent('parent-d'), signal: undefined }),
       /token 已达上限/
     );
     // 模拟宿主 agent/disposed：apply 挂钩的监听器收到父会话结束事件。
