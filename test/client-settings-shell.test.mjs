@@ -153,9 +153,9 @@ test('④ 安全：安全保证 + 逃生舱原样 + 审计健康（只读明细�
   assert.match(audit, /ZH\.auditDetailScope/, '只读口径说明');
 });
 
-test('⑤ 通知与提醒：reminderCenter 原样挂入 reminders 页签', () => {
+test('⑤ 通知与提醒：reminderCenter 挂入 reminders 页签（带只读跳转到建议页签）', () => {
   const shell = functionBody('buildSectionReturn');
-  assert.match(shell, /buildTabZone\(el, s, 'reminders', reminderCenter\)/, '⑤ 原样挂 reminderCenter');
+  assert.match(shell, /buildTabZone\(el, s, 'reminders', el\(reminderCenter, \{ jumpToAdvice: \(\) => s\.setActiveTab\('advice'\) \}\)\)/, '⑤ 挂 reminderCenter 并注入只读跳转');
 });
 
 test('维护卡（v16）：整卡删除——无 buildMaintenanceSection、无挂载、无折叠状态', () => {
@@ -207,7 +207,7 @@ test('滚动条优化（v21）：sap-section 撑满宿主宽；tab 行 flex-wrap
   assert.ok(!/\.sap-adviceDetailTable th\{[^}]*white-space:nowrap/.test(source), '明细表头不强制不换行（防窄面板横向溢出）');
 });
 
-test('样式统一（§1.6）：无方案标签/候选选中/未读边框/理由高亮/候选标注 全部中性 token，无 brand-primary 于常规状态标签', () => {
+test('样式统一：无方案标签/候选选中/未读边框/理由高亮/候选标注 全部中性 token，无 brand-primary 于常规状态标签', () => {
   assert.ok(source.includes(".sap-adviceNoProfileTag{font-size:11px;line-height:16px;color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);border-radius:3px;padding:0 5px;flex:none}"), '无方案标签 token 快照：label-primary + border-l2 + bg-layer-1');
   assert.ok(!source.includes('.sap-adviceNoProfileTag{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l3)'), '无方案标签旧样式（l3/次级色）已移除');
   assert.ok(source.includes(".sap-candidateSelected{border-color:var(--dsw-alias-label-primary)}"), '候选选中边框 = label-primary');
@@ -225,7 +225,7 @@ test('样式统一（§1.6）：无方案标签/候选选中/未读边框/理由
   assert.ok(!/\.sap-zone\{[^}]*background/.test(source) && !/\.sap-zone\{[^}]*margin/.test(source), '页签容器不新增背景/间隔样式（仅 display 控制）');
 });
 
-test('样式统一（§1.6）：⑥ 通知条目 = sap-rowCard/sap-reminder*，已处理折叠 = sap-customized*', () => {
+test('样式统一：⑥ 通知条目 = sap-rowCard/sap-reminder*，已处理折叠 = sap-customized*', () => {
   const center = functionBody('buildReminderCenter');
   assert.match(center, /className: 'sap-card sap-cardStatic'/, '提醒中心根 = sap-card（与方案管理同款卡）');
   assert.match(center, /'sap-cardHead'/, '卡头存在');

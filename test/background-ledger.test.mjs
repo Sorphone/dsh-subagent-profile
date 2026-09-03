@@ -1,4 +1,4 @@
-// test/background-ledger.test.mjs — 后台派发结算内存台账（Task 38a 兜底）。
+// test/background-ledger.test.mjs — 后台派发结算内存台账（兜底）。
 // 纯函数：record/get/clear/上限；路由：GET /ledger/jobs?session= 返回空数组（无记录）。
 
 import { test } from 'node:test';
@@ -23,7 +23,7 @@ test('background ledger：record 后按 session 读取，输出不存正文', ()
   assert.deepEqual(ledger.get('missing'), []);
 });
 
-test('background ledger：record 带 callId（Task 44 BP-05 运行中卡片配对），缺失时省略', () => {
+test('background ledger：record 带 callId（运行中卡片配对），缺失时省略', () => {
   const ledger = createBackgroundLedger();
   const settled = { status: 'completed', stopReason: 'completed', elapsedMs: 10, childTotalTokens: 123, output: 'x' };
   ledger.record('s1', 'job1', settled, 'call-1');

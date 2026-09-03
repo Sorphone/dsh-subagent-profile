@@ -1,4 +1,4 @@
-// test/reminder-store.test.mjs — 提醒系统（Task 42 NT1）host store + 路由。
+// test/reminder-store.test.mjs — 提醒系统 host store + 路由。
 // 一条提醒 = 一条治理审计记录；全动作（创建/已读/采纳/忽略/拒绝/关闭）入审计；
 // P0 三要件字段（severity 上色源、unread 常驻至已读、sessionId 标识）；持久化重启。
 

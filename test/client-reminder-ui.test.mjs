@@ -1,4 +1,4 @@
-// test/client-reminder-ui.test.mjs — Task 42（NT1）机检：提醒系统 P0 三要件与载体。
+// test/client-reminder-ui.test.mjs — 提醒系统 P0 三要件与载体机检。
 // client.js 为浏览器 bundle（无 DOM 测试基建），本文件以源码结构断言 P0 红角标三要件
 // （severity 红 / 常驻至已读 / 带 session 标识）、通知中心与「高价值提醒无 toast」。
 
@@ -24,12 +24,12 @@ function functionBody(name) {
   throw new Error('函数括号不平衡：' + name);
 }
 
-test('Task 42：P0 角标注册到 shell.overlay（root 悬浮层）', () => {
+test('P0 角标注册到 shell.overlay（root 悬浮层）', () => {
   assert.match(source, /'shell\.overlay'/);
   assert.match(source, /dsh-subagent-profile-reminders/);
 });
 
-test('Task 42：P0 角标三要件——severity 红、常驻至已读、带 session 标识', () => {
+test('P0 角标三要件——severity 红、常驻至已读、带 session 标识', () => {
   const body = functionBody('ReminderOverlayBadge');
   // ① severity 上色（红）：P0 过滤 + 错误色样式类。
   assert.match(body, /severity === 'P0'/, '只渲染 P0');
@@ -43,7 +43,7 @@ test('Task 42：P0 角标三要件——severity 红、常驻至已读、带 ses
   assert.match(source, /reminderGlobal: '全局'/, '全局异常必须标注「全局」');
 });
 
-test('Task 42：通知中心（设置页高级区）读同源 /reminders 且全动作回写', () => {
+test('通知中心（设置页高级区）读同源 /reminders 且全动作回写', () => {
   const body = functionBody('ReminderCenter');
   assert.match(body, /api\('\/reminders'\)/, '通知中心必须读 /reminders（与 [6] 审计同源）');
   assert.match(body, /reminders\/ack/, '标记已读必须回写');
@@ -57,7 +57,7 @@ test('Task 42：通知中心（设置页高级区）读同源 /reminders 且全�
   assert.doesNotMatch(row, /act\(r\.id, 'reject'\)/, '通知类条目不再显示拒绝按钮');
 });
 
-test('Task 42：高价值提醒无 toast（toast 仅低价值瞬态，本版零实现）', () => {
+test('高价值提醒无 toast（toast 仅低价值瞬态，本版零实现）', () => {
   // 排除注释行后，代码中不得出现 toast 实现（高价值提醒一律常驻载体）。
   const codeLines = source.split('\n').filter((l) => l.trim() !== '' && !l.trim().startsWith('//'));
   assert.doesNotMatch(codeLines.join('\n'), /toast/i, '代码不得实现 toast（高价值提醒一律常驻）');

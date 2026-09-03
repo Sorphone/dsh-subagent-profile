@@ -1,4 +1,4 @@
-// test/client-chip-family.test.mjs — Task 45（SC1 层 1）机检：三处展示同一 chip
+// test/client-chip-family.test.mjs — 三处展示同一 chip
 // 组件族 + 同口径（父会话 dispatch 卡片 / 子会话页头 banner / 设置页方案卡）。
 // client.js 是浏览器 bundle（window.__ModuleLoader__），无 DOM 测试基建，故本文件
 // 以源码结构断言（读取源码字符串做确定性机检），与 node --check 共同构成 client 门禁。
@@ -38,7 +38,7 @@ test('父卡与方案卡使用同一 chip 组件族，banner 收敛为单一摘�
   assert.match(banner, /sap-subagentBannerTag/, 'banner 必须渲染单一摘要标签');
 });
 
-test('Task 45：父卡 chip 行未展开即渲染（chips 在摘要/详情折叠之外）', () => {
+test('父卡 chip 行未展开即渲染（chips 在摘要/详情折叠之外）', () => {
   const body = functionBody('DispatchToolview');
   const retIdx = body.indexOf('return el(');
   assert.ok(retIdx >= 0, 'DispatchToolview 必须返回元素树');
@@ -49,7 +49,7 @@ test('Task 45：父卡 chip 行未展开即渲染（chips 在摘要/详情折叠
   assert.ok(detailToggleIdx < 0 || chipsIdx < detailToggleIdx, 'chips 行必须先于详情折叠入口渲染（未展开即渲染）');
 });
 
-test('Task 45：banner 注册到 conversation.session.header.utilities 槽', () => {
+test('banner 注册到 conversation.session.header.utilities 槽', () => {
   assert.match(source, /conversation\.session\.header\.utilities/);
   assert.match(source, /dsh-subagent-profile-subagent/, 'banner 条目 id 存在');
 });

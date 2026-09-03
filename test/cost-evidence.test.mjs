@@ -1,4 +1,4 @@
-// test/cost-evidence.test.mjs — 省 token 证据（Task 38b/38c）。
+// test/cost-evidence.test.mjs — 省 token 证据。
 // 纯函数：prices 单价表 + counterfactualFor + summarizeCosts。已知 usage × 单价
 // 断言 cost/saving 与聚合；未指定 model saving=0 + inherit 标；mixed records 断言
 // 继承占比。不依赖 index.mjs。

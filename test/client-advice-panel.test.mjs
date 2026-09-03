@@ -174,8 +174,8 @@ test('候选小节（v10）：纯文字加粗标题「候选方案（未应用�
   const block = functionBody('buildAdviceCandidates');
   assert.ok(block.includes("'sap-candidatesTitle'"), '小节标题类（纯文字加粗）');
   assert.ok(block.includes('candidateNotApplied'), '未应用灰注');
-  assert.ok(block.includes('candidates.length + ZH.candidateCountSuffix + ZH.candidateCountNote'), '数量 + 单选 + 仅参考说明');
-  assert.ok(source.includes("candidateCountNote: ' · 仅参考，不会自动应用'"), '仅参考说明文案');
+  assert.ok(block.includes('candidates.length + ZH.candidateCountSuffix + ZH.candidateCountNote'), '数量 + 单选 + 应用确认说明');
+  assert.ok(source.includes("candidateCountNote: ' · 应用前需你确认'"), '应用前需你确认文案（旧仅参考文案卸载）');
   assert.ok(!block.includes('candidateIntro'), '旧「系统基于近期表现…」说明句由数量行取代');
   assert.ok(!block.includes('sap-candidatesHead'), '方角标签头部行已移除（改小节标题）');
   assert.ok(block.includes('buildAdviceCandidateRow'), '候选项列表');
@@ -295,11 +295,13 @@ test('卡底部：无对应方案 [保存为方案]；有对应方案灰置[按�
   assert.ok(foot.includes("'sap-primaryButton'"), '保存为方案用统一主按钮（sap-primaryButton）');
   assert.ok(foot.includes('actions.saveAdviceProfile(a.profileKey)'), '保存走来源配置');
   assert.ok(foot.includes("'sap-secondaryButton'"), '灰置按建议调整方案用统一次级按钮（sap-secondaryButton）');
-  assert.ok(foot.includes('disabled: true'), '调整按钮不可点');
-  assert.ok(foot.includes("title: ZH.candidateNotApplicable"), '灰置提示应用功能后续开放');
+  assert.ok(foot.includes('const disabled = disabledTitle !== \'\''), '调整按钮按启用条件动态灰置');
+  assert.ok(foot.includes('disabledTitle'), '灰置提示 = 禁用原因（冷启动/未选候选/观察中）');
+  assert.ok(foot.includes('actions.openApplyModal(a.profileKey, selectedId)'), '启用时点击打开确认弹窗');
+  assert.ok(foot.includes('actions.saveAdviceProfile(a.profileKey)'), '保存走来源配置');
   assert.ok(foot.includes('actions.locateProfile(profile.id)'), '定位到方案管理可用');
-  assert.ok(foot.includes('sap-adviceFootNotes'), '说明与生成于拆两行（notes 容器）');
-  assert.ok(foot.includes("generatedText !== '' ? el('p', { className: 'sap-adviceFootNote' }, generatedText)"), '生成于独立成行');
+  assert.ok(foot.includes('sap-adviceFootNotes'), '说明与生成于拆行（notes 容器）');
+  assert.ok(foot.includes("if (generatedText !== '') notes.push(generatedText)"), '生成于独立成行');
   assert.ok(!foot.includes("adviceFootNoteSave + generatedText"), '说明与生成于不再连排一行');
   assert.ok(foot.includes('adviceFootNoteSave'), '无方案卡备注说明存的是当前配置');
   assert.ok(source.includes("adviceFootNoteSave: '仅保存预设、模型与提供方；自定义人格与工具过滤无法还原（隐私保护不落盘），如需完整配置请手动编辑方案。'"), '按钮副注注明只存可还原配置');
@@ -310,7 +312,7 @@ test('卡底部：无对应方案 [保存为方案]；有对应方案灰置[按�
 });
 
 test('保存为方案路由：description 注明配置快照仅预设/模型/提供方（人格与工具过滤不落盘）', () => {
-  assert.ok(routesSource.includes("description: '来自建议面板的配置快照（仅预设/模型/提供方；人格与工具过滤不落盘，按隐私设计）。便于复用与对比。'"), '路由 description 按隐私设计诚实化');
+  assert.ok(routesSource.includes("description: '来自建议面板的配置快照（仅预设/模型/提供方；人格与工具过滤不落盘，按隐私设计）。便于复用与对比分析。'"), '路由 description 按隐私设计诚实化');
   assert.ok(!routesSource.includes('由建议面板保存的当前派发配置'), '旧 description 文案已替换');
 });
 
@@ -324,6 +326,6 @@ test('生成信息行：有样本/无样本两分支模板（N 次派发 / 近�
   assert.ok(line.includes("parts.join(' · ')"), '分段以 · 连接');
   assert.ok(line.includes("if (generated !== '') parts.push(ZH.candidateGeneratedPrefix + generated)"), '无生成时间省「生成于」段');
   assert.ok(source.includes("candidatePerfSuffix: '（满分 100）'"), '满分 100 文案');
-  assert.ok(source.includes("candidateNoSample: '暂无近期派发样本，仅供参考'"), '无样本文案');
+  assert.ok(source.includes("candidateNoSample: '暂无近期派发样本'"), '无样本文案（仅参考已卸载）');
   assert.ok(source.includes("candidateNotApplicable: '应用功能在后续版本开放（届时会先经你确认）'"), '应用提示收进展开区尾部');
 });

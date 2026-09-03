@@ -222,8 +222,8 @@ test('生成信息模板执行：有样本整数化（满分 100）；无样本/
   assert.equal(line(mockEl, { basis: { generatedAt: stamp, n: 3, score: 0.033 } }),
     '生成于 ' + formatMonthDayTime(stamp) + ' · 基于最近 3 次派发 · 近期表现 3（满分 100）', 'score×100 整数化');
   assert.equal(line(mockEl, { basis: { generatedAt: stamp, n: 0, score: 0 } }),
-    '生成于 ' + formatMonthDayTime(stamp) + ' · 暂无近期派发样本，仅供参考', '无样本分支');
-  assert.equal(line(mockEl, { basis: {} }), '暂无近期派发样本，仅供参考', '无数据 + 无时间：无「生成于」段、无 0 分');
+    '生成于 ' + formatMonthDayTime(stamp) + ' · 暂无近期派发样本', '无样本分支');
+  assert.equal(line(mockEl, { basis: {} }), '暂无近期派发样本', '无数据 + 无时间：无「生成于」段、无 0 分');
   assert.equal(line(mockEl, { basis: { n: 5, score: 0.5 } }), '基于最近 5 次派发 · 近期表现 50（满分 100）', '无时间省「生成于」段');
   assert.ok(!source.includes('基于当时数据'), '旧「基于当时数据」文案无残留');
   assert.ok(!source.includes('candidateBasisScore'), '旧「、加权」模板无残留');

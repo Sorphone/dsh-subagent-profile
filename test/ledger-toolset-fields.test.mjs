@@ -1,4 +1,4 @@
-// test/ledger-toolset-fields.test.mjs — 批次 7 工具集子节 host 侧最小字段集：
+// test/ledger-toolset-fields.test.mjs — 工具集子节 host 侧最小字段集：
 // intersection 闸（continuable）output 增加 effectiveAllowNames 与 removedTools
 // （移除清单：run_code 固定移除 + 不在白名单），台账证据层工具集子节展示用。
 // removedTools 超 8 项截断为 { values, truncated }，与名单类截断口径一致。

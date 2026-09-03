@@ -182,7 +182,7 @@ test('装配治理写失败：/add 持久化失败 → audit degraded + P0 提�
     assert.equal(add.json.persisted, false, 'profiles 写失败上报 persisted:false');
     const summary = await callRoute(handler, 'GET', '/options/summary');
     assert.equal(summary.json.audit.health, 'degraded', '治理写失败 health 置 degraded');
-    // Task 42 接线后：profile 持久化失败（+1）+ 降级提醒的审计写失败（+1，degraded 下
+    // 提醒系统接线后：profile 持久化失败（+1）+ 降级提醒的审计写失败（+1，degraded 下
     // 审计通道同样不可写）→ 两次独立审计丢失，不再恒等于 1。
     assert.equal(summary.json.audit.lostGovernance, 2);
     assert.equal(summary.json.audit.lostTelemetry, 0);
@@ -212,6 +212,20 @@ test('资产位置：evolution 资产以 dshHome 为根，不在 .agent-presets 
   } finally { try { rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ } }
 });
 
+test('preset 树：bundled 含 orchestrator-v2 五文件、旧 orchestrator 目录已删除', () => {
+  // V2 收编：presets/orchestrator-v2/ 五文件齐全；presets/orchestrator/ 已 git rm
+  // （bundled 源清单里不得再出现旧名）。
+  const srcEntries = readdirSync(bundledPresetsRoot());
+  assert.ok(!srcEntries.includes('orchestrator'), '旧 bundled orchestrator 目录已删除（V2 取代）');
+  assert.ok(srcEntries.includes('orchestrator-v2'), 'bundled orchestrator-v2 目录存在');
+  const v2Entries = readdirSync(join(bundledPresetsRoot(), 'orchestrator-v2')).sort();
+  assert.deepEqual(
+    v2Entries,
+    ['NOTICE', 'agent.cordis.yml', 'custom-bash.mjs', 'preset.yml', 'tool-bootstrap.mjs'].sort(),
+    'orchestrator-v2 五文件齐全'
+  );
+});
+
 test('资产位置：syncBundledPresets 源/目标目录清单不含 subagent-evolution', () => {
   // 源侧：打包的 presets/ 根目录条目里不得出现 subagent-evolution。
   const srcEntries = readdirSync(bundledPresetsRoot());
@@ -221,9 +235,9 @@ test('资产位置：syncBundledPresets 源/目标目录清单不含 subagent-ev
   const target = mkdtempSync(join(tmpdir(), 'dsh-audit-target-'));
   try {
     const result = syncBundledPresets(target);
-    // 非空断言：presets/ 现含 orchestrator——若未来 bundled 树清空，下面的排除
+    // 非空断言：presets/ 现含 orchestrator-v2——若未来 bundled 树清空，下面的排除
     // 断言会静默空转，故先锁定本次同步确有产物。
-    assert.ok(result.synced.includes('orchestrator'), '同步产物非空（orchestrator 存在）');
+    assert.ok(result.synced.includes('orchestrator-v2'), '同步产物非空（orchestrator-v2 存在）');
     const listed = [...result.synced, ...result.current, ...result.userModified, ...result.failed.map((f) => f.id)];
     assert.ok(!listed.includes('subagent-evolution'), '同步的 preset 清单不得含 subagent-evolution');
     const targetEntries = readdirSync(target);

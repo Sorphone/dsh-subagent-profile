@@ -1,4 +1,4 @@
-// test/drafts-store.test.mjs — auto-profile S1 draft 容器（Task 43 host 侧）。
+// test/drafts-store.test.mjs — auto-profile S1 draft 容器（host 侧）。
 // 纯 store + /draft /drafts /draft/remove 路由；draft 独立于生产 profiles。
 
 import { test } from 'node:test';

@@ -1,5 +1,5 @@
-// test/adoption-tracker.test.mjs — parent_adopted 三态信号生产接线（0.4.0 E-1，
-// 任务书批次 2.1 唯一真断线）。集成级：模拟父会话采纳/未采纳事件流 → tracker 三态
+// test/adoption-tracker.test.mjs — parent_adopted 三态信号生产接线（0.4.0，
+// 父会话采纳断线）。集成级：模拟父会话采纳/未采纳事件流 → tracker 三态
 // 判定 → confirmedFalseCounts join 进 refreshSummaries → weighted_success 与 win_rate
 // 出现分歧（有采纳信号时二者不再恒等）。另锁 apply 接线契约（session/event 订阅、
 // agent/disposed 挂钩）与 sidecar 持久化（重启后判定保留）。
@@ -37,7 +37,7 @@ function writeLedgerFixture(evoDir) {
   writeFileSync(join(evoDir, 'dispatch.jsonl'), records.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
 }
 
-// dispatch 回灌锚点事件（E-1 A.4：父 tool/result 的 meta.decisionTrace.execution）。
+// dispatch 回灌锚点事件（父 tool/result 的 meta.decisionTrace.execution）。
 function anchorEvent(seq, parentSessionId, kind, id) {
   const execution = { kind, parentSessionId };
   if (kind === 'background') execution.jobId = id;
@@ -146,7 +146,7 @@ test('parent_adopted：内容复用（子输出片段出现在父后续文本）
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('parent_adopted：onDecided 钩子逐条收到「明确未采纳」记录（Task 42 P2 提醒源）', () => {
+test('parent_adopted：onDecided 钩子逐条收到「明确未采纳」记录（未采纳提醒源）', () => {
   const { dir, evoDir } = tmpEvoDir();
   try {
     const decided = [];
