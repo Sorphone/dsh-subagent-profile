@@ -52,13 +52,13 @@ test('subagents.registerProvider: called once with the profile provider contract
   assert.equal(typeof provider.prepareContinuable, 'function');
 });
 
-test('tools.register: called once with the dispatch tool contract', async () => {
+test('tools.register: registers dispatch + profiles_query while enabled', async () => {
   const { ctx, records } = createFakeCtx();
   await mod.apply(ctx);
 
-  assert.equal(records.registerToolCalls.length, 1, 'tools.register must be called exactly once while enabled');
-  const tool = records.registerToolCalls[0];
-  assert.equal(tool.name, 'dispatch');
+  assert.equal(records.registerToolCalls.length, 2, 'enabled 时注册 dispatch 与 profiles_query 两个工具');
+  const tool = records.registerToolCalls.find((t) => t.name === 'dispatch');
+  assert.ok(tool, 'dispatch tool must be registered');
   assert.equal(typeof tool.execute, 'function');
   // defineTool normalizes `parameters` into a JSON-schema object:
   // { type, properties, required }. `prompt.required: true` in the spec
@@ -69,6 +69,15 @@ test('tools.register: called once with the dispatch tool contract', async () => 
   assert.ok(tool.parameters.required.includes('prompt'), 'prompt must be a required parameter');
   assert.equal(tool.parameters.properties.profile?.type, 'string');
   assert.ok(tool.output && Array.isArray(tool.output.schema.oneOf), 'output schema must declare a oneOf closure');
+  // profiles_query：入参全可选（无 required），输出闭合对象。
+  const queryTool = records.registerToolCalls.find((t) => t.name === 'profiles_query');
+  assert.ok(queryTool, 'profiles_query tool must be registered');
+  assert.equal(typeof queryTool.execute, 'function');
+  assert.equal(queryTool.parameters.type, 'object');
+  for (const key of ['id', 'tier', 'provider', 'model']) {
+    assert.ok(queryTool.parameters.properties[key], `profiles_query 参数 ${key} 必须声明`);
+  }
+  assert.ok(queryTool.parameters.required === undefined || queryTool.parameters.required.length === 0, 'profiles_query 入参全可选');
 });
 
 test('provide("subagent-profiles"): register/get/list/resolve are all functions', async () => {
@@ -88,39 +97,43 @@ test('provide("subagent-profiles"): register/get/list/resolve are all functions'
 });
 
 test('systemPrompt.section: registers dispatch:profiles and orchestrator:mode', async () => {
-  // gate: the primary judge is the PRESET feature (composedPreset ===
-  // 'orchestrator'), not the tool schema (dispatch is host-global, always visible,
-  // so schemas is only a defensive veto). The snapshot provides a composedPreset
-  // stub returning 'orchestrator' + the default dispatch-capable toolSchemas so an
-  // out-of-the-box apply() registers a non-empty orchestrator section.
-  const { ctx, records } = createFakeCtx({ services: { agentPresets: { composedPreset: () => 'orchestrator' } } });
+  // gate: dispatch:profiles 按「能力」判据（schemas 含 dispatch 即注入），
+  // orchestrator:mode 按「模式」判据（composedPreset === 'orchestrator-v2'）。
+  // 快照提供 composedPreset 桩返回 'orchestrator-v2' + 缺省 dispatch-capable
+  // toolSchemas，开箱 apply() 注册的两段均非空。
+  const { ctx, records } = createFakeCtx({ services: { agentPresets: { composedPreset: () => 'orchestrator-v2' } } });
   await mod.apply(ctx);
 
   const profiles = records.sectionCalls.find((s) => s.name === 'dispatch:profiles');
   assert.ok(profiles, 'systemPrompt.section must register dispatch:profiles');
   assert.equal(profiles.order, 116.5);
   assert.equal(typeof profiles.text, 'function');
-  // text() takes the assembly context (`{ agent, scope, signal }`). The
-  // snapshot provides an orchestrator composedPreset stub + a dispatch-capable
-  // fake agent (default toolSchemas = [{ name: 'dispatch' }]), so the gated text()
-  // is non-empty while enabled.
   const text = profiles.text({ agent: {} });
   assert.ok(text.length > 0, 'dispatch:profiles text() must be non-empty when enabled + dispatch-capable');
   assert.match(text, /Available dispatch profiles/);
-  // 一行行为规则进门控 profiles section（非常开 persona 注入）。
-  assert.match(text, /别把 1-2 步即可自查\/可搜完的小事委派出去/);
-  // 选型规则：先匹配能力、再比成本（钉死便宜优先排序的副作用）。
-  assert.match(text, /选择方案时先匹配任务复杂度与方案描述的能力边界/);
-  // 引号引用：description 在显示行被双引号包裹。
-  assert.match(text, /swap-standard: "切换到 standard 预设的完整编码工具集。/);
-  assert.match(text, /researcher: "关闭深度推理省 token，继承父工具。/);
+  // 瘦身：目录行只含 id + 描述 + tier（无成本/成功率列）；note 一行查表式。
+  assert.match(text, /swap-standard: "写代码与重构场景：切换到 standard 预设的完整编码工具集，适合多文件改动、修复与测试；当父会话不是 standard、但子任务需要完整编码能力时选用。" \(tier: balanced\)/);
+  assert.match(text, /researcher: "调研与汇总场景：关闭深度推理省 token，继承父工具；适合查资料、检索、背景调研与只读分析，不适合改代码。" \(tier: cheap\)/);
+  assert.doesNotMatch(text, /平均|成功率|preset: |model: /, '目录行不得含成本/成功率/preset/model 列');
+  assert.match(text, /profiles_query/, 'note 必须指向 profiles_query 下钻');
+  assert.match(text, /1-2 步可自查的小事直接做别派/, 'note 一行行为规则保留');
 
   const orchestrator = records.sectionCalls.find((s) => s.name === 'orchestrator:mode');
   assert.ok(orchestrator, 'systemPrompt.section must register orchestrator:mode');
   assert.equal(orchestrator.order, 117);
   assert.equal(typeof orchestrator.text, 'function');
   const orchestratorText = orchestrator.text({ agent: {} });
-  assert.ok(orchestratorText.length > 0, 'orchestrator:mode text must be non-empty when enabled + dispatch-capable');
+  assert.ok(orchestratorText.length > 0, 'orchestrator:mode text must be non-empty when enabled + orchestrator-v2');
+});
+
+test('systemPrompt.section: profiles 段按能力注入（非 orchestrator-v2 亦可），编排段仍 orchestrator-v2-only', async () => {
+  const { ctx, records } = createFakeCtx({ services: { agentPresets: { composedPreset: () => 'standard' } } });
+  await mod.apply(ctx);
+
+  const profiles = records.sectionCalls.find((s) => s.name === 'dispatch:profiles');
+  assert.ok(profiles.text({ agent: {} }).length > 0, 'schemas 含 dispatch → profiles 段注入（与预设无关）');
+  const orchestrator = records.sectionCalls.find((s) => s.name === 'orchestrator:mode');
+  assert.equal(orchestrator.text({ agent: {} }), '', '非 orchestrator-v2 → orchestrator:mode 空');
 });
 
 test('agents.create is never touched at apply time', async () => {

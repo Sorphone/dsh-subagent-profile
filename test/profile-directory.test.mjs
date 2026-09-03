@@ -1,4 +1,4 @@
-// test/profile-directory.test.mjs — 单一数据源（Task 37a）+ 埋点补全（37b 快照侧）。
+// test/profile-directory.test.mjs — 单一数据源 + 埋点补全（快照侧）。
 // 验收：同一 store 状态，profileDirectoryRows 与 profileSnapshotOf 同序同 id；section
 // 文本从同一 rows 派生；chosenOutsideSnapshot 与 advice_present 埋点正确。
 
