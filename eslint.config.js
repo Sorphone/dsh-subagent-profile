@@ -8,6 +8,7 @@ export default [
   js.configs.recommended,
   {
     files: ['**/*.mjs', '**/*.js'],
+    ignores: ['presets/**'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',
@@ -32,10 +33,11 @@ export default [
       'no-undef': 'error',
     },
   },
-  // 行门：全仓库 ≤400 行/文件（client.js 按 ADR 豁免文件级）
+  // 行门：全仓库 ≤400 行/文件（client.js 按 ADR 豁免文件级；presets/** 为搬运
+  // 冻结的上游预设内容、内容零修改，行门豁免——一致性由 preflight byte 对账守护）
   {
     files: ['**/*.mjs', '**/*.js'],
-    ignores: ['lib/client.js'],
+    ignores: ['lib/client.js', 'presets/**'],
     rules: {
       'max-lines': ['error', { max: 400, skipBlankLines: true, skipComments: false }],
       'max-lines-per-function': ['error', { max: 50, skipBlankLines: true, skipComments: false }],
@@ -75,5 +77,11 @@ export default [
       'max-lines': 'off',
       'max-lines-per-function': 'off',
     },
+  },
+  // presets/** 全局豁免：搬运冻结的上游预设内容（如编排者模式 V2 的
+  // custom-bash.mjs / tool-bootstrap.mjs），内容零修改，行门/推荐规则均不适用；
+  // 其一致性由 preflight 的 byte 对账守护。
+  {
+    ignores: ['presets/**'],
   },
 ];
