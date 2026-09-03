@@ -85,9 +85,10 @@ test('① 方案管理 ② 成本与统计：原样迁移零改动（只换容�
   const resetPos = shell.indexOf('ZH.resetAllBuiltins');
   const costPos = shell.indexOf('buildCostObservabilitySection');
   assert.ok(resetPos >= 0 && costPos >= 0 && resetPos < costPos, '重置按钮在方案管理（成本卡之前）');
-  assert.match(shell, /buildTabZone\(el, s, 'profiles',\r?\n {6}buildSettingsCard\(el, 1/, '① 只挂方案管理主卡（兼容 LF/CRLF 检出）');
+  assert.match(shell, /buildTabZone\(el, s, 'profiles',\r?\n {6}el\('div', \{ className: 'sap-zoneStack' \}/, '① 挂方案管理主卡 + 数据维护卡（本批新增堆叠容器）');
+  assert.match(shell, /buildMaintenanceCard\(el, s, actions\)/, '① 尾部挂数据维护卡');
   assert.match(shell, /buildTabZone\(el, s, 'cost'/, '② 挂在 cost 页签');
-  assert.doesNotMatch(shell, /buildMaintenanceSection/, '① 尾部不再挂维护卡（v16 整卡删除）');
+  assert.doesNotMatch(shell, /buildMaintenanceSection/, '旧维护卡函数名不存在');
   assert.doesNotMatch(shell, /buildTabZone\(el, s, 'maintenance'/, '维护不是页签');
 });
 
