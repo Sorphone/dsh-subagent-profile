@@ -116,58 +116,13 @@ Delegation never lets a subagent gain more power than you already have — this 
 
 ```
 dsh-subagent-profile/
-├── index.mjs                     # host side: the plugin itself (dispatch tool, profile provider, service, HTTP routes)
+├── index.mjs          # plugin entry: dispatch tool, profile provider, services, HTTP routes
 ├── lib/
-│   ├── client.js                 # browser side: settings page + ledger + dispatch tool-call card
-│   └── core/                     # host-side modules (lightweight layering)
-│       ├── pure.mjs              # dependency-free pure functions (sanitize / prune / guard math — unit-tested)
-│       ├── shims.mjs             # the single @deepseek-ai import facade (guards fail loud, helpers degrade softly)
-│       ├── catalog.mjs           # tool-name → zh / category tables (zero-dep)
-│       ├── catalog-cache.mjs     # process-shared catalog snapshot (models / presets / tools, TTL cache)
-│       ├── cost-guard.mjs        # runtime capability checks (provider / model / reasoning effort)
-│       ├── cost-evidence.mjs     # counterfactual savings evidence (token-saving proof)
-│       ├── prices.mjs            # per-dispatch price table (average-based placeholder)
-│       ├── decision-trace.mjs    # decision trace (checks / effective / settled) + failure ledger
-│       ├── delegation.mjs        # background one-shot settling + child usage collection
-│       ├── dispatch-gates.mjs    # pre-dispatch safety checks (whitelist / cost / intersection / budget)
-│       ├── dispatch-guard.mjs    # concurrency + per-parent token budget guard
-│       ├── dispatch-schema.mjs   # dispatch tool input/output schema declarations
-│       ├── dispatch-tool.mjs     # dispatch tool factory (defineTool + execute + syncTool)
-│       ├── draft-gates.mjs       # draft profile gates (three checks)
-│       ├── drafts-store.mjs      # draft profile persistence
-│       ├── escape.mjs            # escape-hatch allow store
-│       ├── evolution-ledger.mjs  # decision ledger (jsonl) + governance audit
-│       ├── evolution-summary.mjs # aggregate statistics (per-profile, capability/budget axes)
-│       ├── evolution-advice.mjs  # read-only dispatch suggestion generation
-│       ├── adoption-tracker.mjs  # child-result adoption verdict tracking (cross-restart)
-│       ├── adoption-reminder.mjs # adoption-verdict reminder generation
-│       ├── reminder-store.mjs    # reminder store + audit-coupled records
-│       ├── background-ledger.mjs # background job ledger (in-memory, resets on restart)
-│       ├── http-routes.mjs       # settings loopback HTTP routes
-│       ├── intersection.mjs      # tool-intersection pure core
-│       ├── presets-sync.mjs      # bundled preset self-install (hash-gated sync)
-│       ├── profile-provider.mjs  # the `profile` subagent provider
-│       ├── profile-directory.mjs # read-only profile directory (for the model)
-│       ├── profiles-store.mjs    # profile registry store + switch persistence
-│       └── whitelist.mjs         # system-trust preset whitelist
-├── presets/orchestrator-v2/      # bundled "orchestrator-v2" agent preset (self-installed, synced on every startup)
-├── cordis.patch.yml              # bundle patch: inserts the plugin row into the host composition
-├── .gitea/workflows/ci.yml       # bare-CI (Gitea Actions; needs an Act runner on the server)
-├── package.json                  # metadata, files whitelist, exports (test / test:bare / preflight scripts)
-├── scripts/
-│   ├── preflight.mjs             # preflight: preset-tree reconciliation + no hardcoded version badge (zero-dep)
-│   └── leak-scan.mjs             # public-release gate: scans all history + worktree for sensitive patterns
-├── docs/
-│   └── screenshots/              # README screenshots
-├── test/                         # host-side tests (node:test, zero extra deps)
-│   ├── README.md / README.zh.md  # test directory guide (EN/ZH) — two-tier split explained
-│   ├── harness/ctx.mjs           # fake Cordis ctx + ~/.dsh isolation
-│   ├── pure / input-schema / catalog-integrity.test.mjs   # bare tier (import-free, runs in bare CI)
-│   └── *.test.mjs                # junction tier (local only): characterization / facade / gating / persist / recycle /
-│                                 #   cost-guard / continuable-guard / decision-trace / dispatch-guard / escape-hatch /
-│                                 #   evolution-* / csrf / label-preset-sync / percall-spec / trust-label / audit-meta / …
-├── README.md / README.zh.md      # this document (EN/ZH)
-└── LICENSE
+│   ├── client.js      # browser side: settings page, per-session ledger, dispatch tool-call card
+│   └── core/          # host-side modules by domain: gates, ledger, evolution, profiles, query, sync
+├── presets/           # bundled agent presets (e.g. orchestrator-v2)
+├── test/              # node:test suite (pure and junction tiers)
+└── docs/              # screenshots
 ```
 
 ## Contributing

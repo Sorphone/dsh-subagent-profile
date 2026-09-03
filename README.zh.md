@@ -116,58 +116,13 @@ dispatch(
 
 ```
 dsh-subagent-profile/
-├── index.mjs                     # 宿主侧：插件本体（dispatch 工具、方案提供者、服务、HTTP 路由）
+├── index.mjs          # 插件入口：dispatch 工具、方案提供方、服务与 HTTP 路由
 ├── lib/
-│   ├── client.js                 # 浏览器侧：设置页 + 台账 + dispatch 工具卡片
-│   └── core/                     # 宿主侧模块（轻量分层）
-│       ├── pure.mjs              # 零依赖纯函数（清洗/剪枝/护栏数学——单测覆盖）
-│       ├── shims.mjs             # 唯一的 @deepseek-ai 导入门面（护栏大声失败，辅助软降级）
-│       ├── catalog.mjs           # 工具名 → 中文/分类表（零依赖）
-│       ├── catalog-cache.mjs     # 进程共享目录快照（模型/预设/工具，TTL 缓存）
-│       ├── cost-guard.mjs        # 运行时能力检查（提供方/模型/推理强度）
-│       ├── cost-evidence.mjs     # 省 token 反事实对照证据
-│       ├── prices.mjs            # 每次派发单价表（当前为均价占位）
-│       ├── decision-trace.mjs    # 决策轨迹（检查/生效/结算）+ 失败台账
-│       ├── delegation.mjs        # 后台一次性结算 + 子用量采集
-│       ├── dispatch-gates.mjs    # 派发前安全检查（白名单/成本/交集/预算）
-│       ├── dispatch-guard.mjs    # 并发 + 每父会话 token 预算护栏
-│       ├── dispatch-schema.mjs   # dispatch 工具输入/输出 schema 声明
-│       ├── dispatch-tool.mjs     # dispatch 工具工厂（defineTool + execute + syncTool）
-│       ├── draft-gates.mjs       # 草稿方案三道闸
-│       ├── drafts-store.mjs      # 草稿方案持久化
-│       ├── escape.mjs            # 逃生舱放行存储
-│       ├── evolution-ledger.mjs  # 派发决策台账（jsonl）+ 治理审计
-│       ├── evolution-summary.mjs # 聚合统计（按方案，能力/预算双轴）
-│       ├── evolution-advice.mjs  # 只读派发建议生成
-│       ├── adoption-tracker.mjs  # 子结果采纳判定跟踪（跨重启）
-│       ├── adoption-reminder.mjs # 采纳判定提醒生成
-│       ├── reminder-store.mjs    # 提醒存储 + 审计耦合记录
-│       ├── background-ledger.mjs # 后台任务台账（内存态，重启即失）
-│       ├── http-routes.mjs       # 设置回环 HTTP 路由
-│       ├── intersection.mjs      # 工具交集纯核心
-│       ├── presets-sync.mjs      # 内置预设自动安装（哈希门控同步）
-│       ├── profile-provider.mjs  # `profile` 子代理提供者
-│       ├── profile-directory.mjs # 只读方案目录（供模型参考）
-│       ├── profiles-store.mjs    # 方案注册表存储 + 开关持久化
-│       └── whitelist.mjs         # system-trust 预设白名单
-├── presets/orchestrator-v2/      # 内置「orchestrator-v2」预设（自动安装，每次启动同步）
-├── cordis.patch.yml              # bundle patch：把插件行插入宿主组合
-├── .gitea/workflows/ci.yml       # bare-CI（Gitea Actions；需服务器上的 Act runner）
-├── package.json                  # 元数据、files 白名单、exports（test / test:bare / preflight 脚本）
-├── scripts/
-│   ├── preflight.mjs             # 预检：预设树一致 + 无硬编码版本徽章（零依赖）
-│   └── leak-scan.mjs             # 公开发布门：扫描全历史与工作区的敏感模式
-├── docs/
-│   └── screenshots/              # README 截图
-├── test/                         # 宿主侧测试（node:test，零额外依赖）
-│   ├── README.md / README.zh.md  # 测试目录指南（中英）——两层拆分说明
-│   ├── harness/ctx.mjs           # 假 Cordis ctx + ~/.dsh 隔离
-│   ├── pure / input-schema / catalog-integrity.test.mjs   # bare 层（免导入，bare CI 可跑）
-│   └── *.test.mjs                # junction 层（仅本地）：characterization / facade / gating / persist / recycle /
-│                                 #   cost-guard / continuable-guard / decision-trace / dispatch-guard / escape-hatch /
-│                                 #   evolution-* / csrf / label-preset-sync / percall-spec / trust-label / audit-meta / …
-├── README.md / README.zh.md      # 本文档（英/中）
-└── LICENSE
+│   ├── client.js      # 浏览器端：设置页、每会话台账、派发工具调用卡片
+│   └── core/          # 宿主端核心模块（按域：闸门、台账、自进化、方案、查询、同步）
+├── presets/           # 内置 Agent 预设（如 orchestrator-v2）
+├── test/              # node:test 测试套件（纯函数层 + 接线层）
+└── docs/              # 截图
 ```
 
 ## 贡献
