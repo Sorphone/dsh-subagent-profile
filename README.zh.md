@@ -19,13 +19,15 @@
 
 | | 内置 `subagent` | `dsh-subagent-profile` |
 |---|---|---|
-| 按子任务选模型/预设 | ❌ 每个子任务同一个「大脑」 | ✅ 按任务逐个指定 |
+| 按子任务选模型/预设 | ✅ 可选 `provider` / `model` / `reasoning_effort`（需先启用模型选择） | ✅ 方案级 profile：预设+模型+推理强度+工具范围+预算一捆，per-call 可覆盖 |
 | 可复用的命名方案 | ❌ | ✅ 方案（profile） |
 | 工具范围收敛 | ❌ | ✅ 白名单 ∩ 父会话，`run_code` 恒移除 |
 | 派发前安全检查 | ❌ | ✅ 白名单/成本/交集/审批/预算，全程记录 |
 | 成本可见 | ❌ | ✅ 每次派发的成本估算 + 节省对照 |
-| 派发决策台账 | ❌ | ✅ 请求vs生效、检查结果、执行、结算全留痕 |
+| 派发决策台账 | ❌ | ✅ 请求 vs 生效、检查结果、执行、结算全留痕 |
 | 界面管理 | ❌ | ✅ 设置页 + 会话内台账标签页 |
+| 基于表现的改进建议 | ❌ | ✅ 确认后应用 · 随时撤销 |
+| 官方模型选择联动 | ✅ 启用后由官方工具自身校验 | ✅ 官方启用后派发遵循同一白名单（越界路由直接拒绝） |
 
 ## 安装
 
@@ -34,7 +36,7 @@ dsh plugin --profile web add dsh-subagent-profile        # 发布包
 dsh plugin --profile web add ./dsh-subagent-profile      # 本地源码
 ```
 
-重启 `dsh web`。这是一个标准的 **bundle 插件**：提供 `dispatch` 工具、方案提供者、`subagent-profiles` 服务、`/subagent-profiles/*` 回环管理路由、设置页（「子 Agent 方案」）、会话内派发决策台账标签页，以及 web 界面中的 `dispatch` 工具卡片。启动时还会**自动安装一个 agent 预设**——**`orchestrator`**（「编排者模式」）——在新会话的预设选择器里选用。同步是幂等的且每次启动重跑，升级插件即更新预设。
+重启 `dsh web`。这是一个标准的 **bundle 插件**：提供 `dispatch` 工具、方案提供者、`subagent-profiles` 服务、`/subagent-profiles/*` 回环管理路由、设置页（「子 Agent 方案」）、会话内派发决策台账标签页，以及 web 界面中的 `dispatch` 工具卡片。启动时还会**自动安装一个 agent 预设**——**`orchestrator-v2`**（「编排者模式 V2」）——在新会话的预设选择器里选用。同步是幂等的且每次启动重跑，升级插件即更新预设。
 
 ## 使用
 
@@ -95,14 +97,16 @@ dispatch(
   - `summaries.json` —— 按方案聚合的统计（带版本号，损坏自动重建）。
   - `adopted-state.json` —— 子结果采纳判定状态（跨重启）。
   - `reminders.json` —— 提醒存储（一条提醒 = 一条审计记录）。
-- `~/.dsh/.agent-presets/orchestrator/` —— 自动安装的 `orchestrator` 预设（每次启动从内置 `presets/orchestrator/` 同步）。
+- `~/.dsh/.agent-presets/orchestrator-v2/` —— 自动安装的 `orchestrator-v2` 预设（每次启动从内置 `presets/orchestrator-v2/` 同步）。
 
-尊重 `DSH_HOME` 环境变量（默认 `~/.dsh`）。卸载插件会移除上述数据文件与自动安装的 `orchestrator` 预设目录（其他插件的预设不动）；重装或重启会重新同步预设并重建数据文件。
+尊重 `DSH_HOME` 环境变量（默认 `~/.dsh`）。卸载插件会移除上述数据文件与自动安装的 `orchestrator-v2` 预设目录（其他插件的预设不动）；重装或重启会重新同步预设并重建数据文件。
 
 ## 已知限制
 
 - **后台派发**需要 `@deepseek-ai/dsh-jobs` 与 `@deepseek-ai/dsh-tool-jobs` 已加载；否则报「dispatch: 后台派发不可用：缺少 jobs 服务」。
 - **持久（continuable）模式**走 DSH 标准组合路径，`preset` 换用与 `reasoningEffort` 会被忽略（子代理继承父预设与默认推理强度）。
+- **持久模式的后续轮次走官方 `send_message`**（插件通过官方子代理句柄驱动后续对话）。
+- **官方模型选择是 web 线功能**：内置 subagent 工具的会话策略随 web 应用提供，headless 部署没有；生产默认未启用，需手动开启后才会生效。
 - **子代理的最终工具集由谁决定，取决于模式**：
   - 持久（continuable）模式：由本插件预先收敛——子代理 `allow` =（父工具集 − `run_code` − `deny`）∩ `allow`。前提假设：持久模式沿用父会话预设，故子工具集与父会话基本一致；一旦 dsh 的行为变化导致两者不同（如未来支持预设换用后组合出不同工具集），工具收敛会**直接报错拒绝**（保守安全，绝不静默放行），待 dsh 官方提供相应接口后替换为真正的父 ∩ 子交集。
   - 一次性模式：由 dsh 决定，插件读不到最终受限结果；卡片显示「工具由系统最终授予」。
@@ -146,7 +150,7 @@ dsh-subagent-profile/
 │       ├── profile-directory.mjs # 只读方案目录（供模型参考）
 │       ├── profiles-store.mjs    # 方案注册表存储 + 开关持久化
 │       └── whitelist.mjs         # system-trust 预设白名单
-├── presets/orchestrator/         # 内置「orchestrator」预设（自动安装，每次启动同步）
+├── presets/orchestrator-v2/      # 内置「orchestrator-v2」预设（自动安装，每次启动同步）
 ├── cordis.patch.yml              # bundle patch：把插件行插入宿主组合
 ├── .gitea/workflows/ci.yml       # bare-CI（Gitea Actions；需服务器上的 Act runner）
 ├── package.json                  # 元数据、files 白名单、exports（test / test:bare / preflight 脚本）
@@ -155,7 +159,7 @@ dsh-subagent-profile/
 │   └── leak-scan.mjs             # 公开发布门：扫描全历史与工作区的敏感模式
 ├── docs/
 │   └── screenshots/              # README 截图
-├── test/                         # 宿主侧测试（node:test，零额外依赖；438 用例）
+├── test/                         # 宿主侧测试（node:test，零额外依赖）
 │   ├── README.md / README.zh.md  # 测试目录指南（中英）——两层拆分说明
 │   ├── harness/ctx.mjs           # 假 Cordis ctx + ~/.dsh 隔离
 │   ├── pure / input-schema / catalog-integrity.test.mjs   # bare 层（免导入，bare CI 可跑）
@@ -174,7 +178,7 @@ dsh-subagent-profile/
 
 ## 致谢
 
-内置的 `orchestrator` 预设灵感来自 [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui) 的 [dsh-liangshen](https://github.com/zhu1090093659/dsh-web-ui/tree/main/packages/dsh-liangshen)（梁神模式），Apache-2.0 许可。感谢作者。
+内置的 `orchestrator-v2` 预设灵感来自 [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui) 的 [dsh-liangshen](https://github.com/zhu1090093659/dsh-web-ui/tree/main/packages/dsh-liangshen)（梁神模式），Apache-2.0 许可。感谢作者。
 
 ## 许可
 

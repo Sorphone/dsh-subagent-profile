@@ -19,13 +19,15 @@ For [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH).
 
 | | Built-in `subagent` | `dsh-subagent-profile` |
 |---|---|---|
-| Per-subtask model / preset | ❌ same brain for every subtask | ✅ pick per subtask |
+| Per-subtask model / preset | ✅ optional `provider` / `model` / `reasoning_effort` (after enabling model selection) | ✅ one profile bundles preset + model + effort + tool scope + budget; overridable per call |
 | Reusable named setups | ❌ | ✅ profiles |
 | Tool-scope narrowing | ❌ | ✅ whitelist ∩ parent, `run_code` always removed |
 | Safety checks | ❌ | ✅ whitelist / cost / intersection / approval / budget, all recorded |
 | Cost visibility | ❌ | ✅ per-dispatch estimate + savings comparison |
-| Decision ledger | ❌ | ✅ full trace: request vs. effective, gates, execution, settlement |
+| Decision ledger | ❌ | ✅ full trace: request vs. effective, checks, execution, settlement |
 | GUI management | ❌ | ✅ settings page + per-session ledger tab |
+| Performance-based suggestions | ❌ | ✅ confirm to apply, undo anytime |
+| Official model-selection interplay | ✅ enforced natively once enabled | ✅ dispatch follows the same whitelist (out-of-range routes are rejected) |
 
 ## Installation
 
@@ -34,7 +36,7 @@ dsh plugin --profile web add dsh-subagent-profile        # published package
 dsh plugin --profile web add ./dsh-subagent-profile      # from a local checkout
 ```
 
-Restart `dsh web`. This is a standard **bundle plugin**: it provides the `dispatch` tool, the profile provider, the `subagent-profiles` service, the `/subagent-profiles/*` loopback management routes, the settings page (「子 Agent 方案」), the per-session ledger tab, and the `dispatch` tool-call card in the web GUI. On startup it also **self-installs an agent preset** — **`orchestrator`** (「编排者模式」) — pick it in the new-session preset picker. The sync is idempotent and re-runs on every startup, so upgrading the plugin updates the preset.
+Restart `dsh web`. This is a standard **bundle plugin**: it provides the `dispatch` tool, the profile provider, the `subagent-profiles` service, the `/subagent-profiles/*` loopback management routes, the settings page (「子 Agent 方案」), the per-session ledger tab, and the `dispatch` tool-call card in the web GUI. On startup it also **self-installs an agent preset** — **`orchestrator-v2`** (「编排者模式 V2」) — pick it in the new-session preset picker. The sync is idempotent and re-runs on every startup, so upgrading the plugin updates the preset.
 
 ## Usage
 
@@ -95,14 +97,16 @@ Delegation never lets a subagent gain more power than you already have — this 
   - `summaries.json` — aggregated per-profile statistics (versioned, rebuilt on corruption).
   - `adopted-state.json` — adoption verdict state for child results (cross-restart).
   - `reminders.json` — reminder store (one reminder = one audit record).
-- `~/.dsh/.agent-presets/orchestrator/` — the self-installed `orchestrator` agent preset (synced from the bundled `presets/orchestrator/` on every startup).
+- `~/.dsh/.agent-presets/orchestrator-v2/` — the self-installed `orchestrator-v2` agent preset (synced from the bundled `presets/orchestrator-v2/` on every startup).
 
-`DSH_HOME` is respected and defaults to `~/.dsh`. Uninstalling the plugin removes the data files above and the self-installed `orchestrator` preset directory (other plugins' presets are left untouched); re-installing or re-launching re-syncs the preset and regenerates the data files.
+`DSH_HOME` is respected and defaults to `~/.dsh`. Uninstalling the plugin removes the data files above and the self-installed `orchestrator-v2` preset directory (other plugins' presets are left untouched); re-installing or re-launching re-syncs the preset and regenerates the data files.
 
 ## Known limitations
 
 - **Background dispatch** requires `@deepseek-ai/dsh-jobs` and `@deepseek-ai/dsh-tool-jobs` to be loaded; otherwise it fails with "dispatch: 后台派发不可用：缺少 jobs 服务".
 - **Continuable mode** goes through the DSH standard composition path, so the `preset` swap and `reasoningEffort` are ignored (the child inherits the parent preset at the default reasoning effort).
+- **Continuable follow-ups** are delivered through the official `send_message` channel (the plugin drives the child via the official child handle).
+- **Official model selection is a web-line feature**: the session policy for the built-in subagent tools ships with the web app and is not available in headless deployments. In production it is off by default and must be enabled before it takes effect.
 - **Who decides the child's final tool set depends on the mode**:
   - Continuable: narrowed by this plugin up front — the child's `allow` = (parent tool set − `run_code` − `deny`) ∩ `allow`. Assumption: continuable inherits the parent preset, so the child's tool set ≈ the parent's; if dsh's behavior changes so the two differ (e.g. a future preset swap composing a different tool set), tool narrowing fails with a hard error (conservatively safe — never silently granting more), to be replaced with a true parent ∩ child intersection once dsh provides an official seam.
   - One-shot: decided by dsh; the plugin cannot read the final restricted result and the card reports "tools are finally granted by the system".
@@ -146,7 +150,7 @@ dsh-subagent-profile/
 │       ├── profile-directory.mjs # read-only profile directory (for the model)
 │       ├── profiles-store.mjs    # profile registry store + switch persistence
 │       └── whitelist.mjs         # system-trust preset whitelist
-├── presets/orchestrator/         # bundled "orchestrator" agent preset (self-installed, synced on every startup)
+├── presets/orchestrator-v2/      # bundled "orchestrator-v2" agent preset (self-installed, synced on every startup)
 ├── cordis.patch.yml              # bundle patch: inserts the plugin row into the host composition
 ├── .gitea/workflows/ci.yml       # bare-CI (Gitea Actions; needs an Act runner on the server)
 ├── package.json                  # metadata, files whitelist, exports (test / test:bare / preflight scripts)
@@ -155,7 +159,7 @@ dsh-subagent-profile/
 │   └── leak-scan.mjs             # public-release gate: scans all history + worktree for sensitive patterns
 ├── docs/
 │   └── screenshots/              # README screenshots
-├── test/                         # host-side tests (node:test, zero extra deps; 438 cases)
+├── test/                         # host-side tests (node:test, zero extra deps)
 │   ├── README.md / README.zh.md  # test directory guide (EN/ZH) — two-tier split explained
 │   ├── harness/ctx.mjs           # fake Cordis ctx + ~/.dsh isolation
 │   ├── pure / input-schema / catalog-integrity.test.mjs   # bare tier (import-free, runs in bare CI)
@@ -174,7 +178,7 @@ If this plugin has been useful to you, please give it a ⭐ on GitHub — it hel
 
 ## Credits
 
-The bundled `orchestrator` agent preset was inspired by [dsh-liangshen](https://github.com/zhu1090093659/dsh-web-ui/tree/main/packages/dsh-liangshen) (梁神模式) from [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui), licensed under Apache-2.0. Thanks to its author for the great work.
+The bundled `orchestrator-v2` agent preset was inspired by [dsh-liangshen](https://github.com/zhu1090093659/dsh-web-ui/tree/main/packages/dsh-liangshen) (梁神模式) from [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui), licensed under Apache-2.0. Thanks to its author for the great work.
 
 ## License
 
