@@ -1,0 +1,2 @@
+name: 编排者模式 V2
+description: 编排者模式（orchestrator）的梁神 V2 改造版：第一阶段只暴露 Minimal 双工具（bash + str_replace_editor）与编排者 persona 锚定轨迹，稳定后升入 PTC 模式恢复全量编排能力（dispatch / subagent / workflow / ralph）。已适配当前 DSH 0.1.2+。

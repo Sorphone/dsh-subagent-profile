@@ -1,4 +1,4 @@
-# `orchestrator` 编排者预设：主 Agent 协调模式。
+# `orchestrator-v2` 编排者预设 V2：主 Agent 协调模式 + 梁神 V2 两阶段引导。
 #
 # 与官方 `standard` 预设逐行一致，仅 persona 段改写为「主协调 Agent」身份：
 # 拆解任务、经宿主注册的 `dispatch` 工具（按场景选方案/预设/模型/推理强度）
@@ -6,8 +6,27 @@
 # 再集成结果。`dispatch` 工具本身由 dsh-subagent-profile 宿主行注册，对所有
 # 预设可见；本预设只补下面的委派工具。
 #
-# 改编自官方 `standard` 预设（仅 persona 段不同）；原始 DeepSeek 版权与
-# MIT 许可声明见开源仓库。
+# V2 改造（模仿梁神模式 V2，适配当前 DSH >= 0.1.2）：
+# - 引入两阶段引导 `./tool-bootstrap.mjs`：第一个持久工具/调用事件之前，
+#   模型只看到 Minimal 双工具（`bash` + `str_replace_editor`）与本预设的
+#   persona 段，无运行时上下文、只放行白名单消息来源；锚定（或四步兜底、
+#   或首轮结束）后升入 PTC 模式（单 `run_code` 工具）并恢复全量目录，
+#   工作区指令与技能目录延迟一步注入。压缩后回落到受控阶段
+#   （双工具 + compactionTools 核心工作集，含 dispatch/subagent 以维持委派），
+#   等待新的升态信号。
+# - tool-bootstrap.mjs 已适配 0.1.2：经 `session.snapshotEvents()` 读事件日志
+#   （旧 `session.events` 属性已移除，直接读会每轮崩 "Cannot read properties
+#   of undefined (reading 'length')"）；persona 已含 `{{cwd}}` 模板时不再追加
+#   字面工作目录行。
+# - 补 `str_replace_editor`（phase-1 编辑器）；win32 下补 `custom-bash`
+#   （Git Bash `bash` 工具）以保住 phase-1 的 `bash` 锚点——官方 tool-bash
+#   在 win32 禁用、tool-pwsh 不叫 bash，没有它 phase-1 会退化成全量目录。
+#   posix 下官方 tool-bash 本身就叫 bash，无需补行。
+# - 补 `command-goal`（/goal 人机命令，对齐当前官方 standard）；spawn 行补
+#   `modelSelectionSettings: true`。
+#
+# 改编自官方 `standard` 预设与梁神模式 V2（liangshen-v2）；原始 DeepSeek
+# 版权与 MIT 许可声明见开源仓库与随附 NOTICE。
 #
 # 本文件是 agent 平面组成：由 roster 挂载一次到 standing scope，引用它的会话
 # 经 scope 父系加入，本文件注册的工具与 prompt 段覆盖每个加入的 agent；会话
@@ -37,6 +56,35 @@
 
       边界：子 Agent 能力 ⊆ 你，派发不豁免父会话的审批要求；子 Agent 失败或超出权限时自己接手重做，或用 ask_user_question 向用户澄清。
 
+# 两阶段输入引导（同梁神 V2 的 tool-bootstrap）：在第一个持久 tool/call 事件
+# 之前，模型只看到 `bash` + `str_replace_editor` 双工具与本预设 persona 段、
+# 无运行时上下文、只放行白名单消息来源（直接用户消息 + goal 自动轮次）。
+# anchorGate 让升态保持到首个 minimal-like 推理块（四步兜底）；
+# promoteAfterFirstResponse 避免无工具首答后永久双工具，并在首轮结束时释放
+# 锚门会话。升态后目录以 PTC 模式呈现（线上单一 run_code 工具，步边界切换），
+# 工作区指令与技能目录延迟一步；bootstrapMaxTokens 封顶 phase-1 输出预算
+# （1024），升态后再剥离。压缩后回落到受控阶段（双工具 + compactionTools），
+# 直到新升态信号——本预设把 dispatch/subagent 加进 compactionTools，
+# 让压缩后的编排者仍能继续委派。
+- id: tool-bootstrap
+  name: ./tool-bootstrap.mjs
+  config:
+    shellTools: [bash]
+    commonTools: [str_replace_editor]
+    messageSources: [user, goal]
+    anchorGate: true
+    maxBootstrapSteps: 4
+    promoteAfterFirstResponse: true
+    bootstrapMaxTokens: 1024
+    compactionTools: [read, write, edit, glob, grep, todo_write, ask_user_question, dispatch, subagent]
+    deferredSources: [agent-instructions, skill-catalog]
+    deferredGraceSteps: 1
+    promotedPresentation: code
+    # 升态后以一次性非指令式提示替代 AGENTS.md 全文注入（梁神 V2 保留的
+    # issue #388 设定），知识经 read / skill_load 可达。设 false 恢复全文注入。
+    instructionHint: true
+
+# 工作区指令在 phase 1 被 tool-bootstrap 隔离，升态后延迟一步注入并保持更新。
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
   config:
@@ -57,7 +105,24 @@
   name: '@deepseek-ai/dsh-tool-pwsh'
   disabled: !!js process.platform !== 'win32'
 
+# win32 专用 `bash` 工具（custom-bash.mjs，同梁神 V2）：官方 tool-bash 在
+# win32 禁用、tool-pwsh 又不叫 bash，phase-1 的 Minimal 锚点（shellTools:
+# [bash]）会找不到 shell 而退化成全量目录。此工具经跨平台 subprocess 缝隙
+# 执行 Git Bash（`bash -c`），保住锚点；posix 下官方 tool-bash 已提供
+# 同名工具，此行走禁用。非零退出上报不抛；调用间状态不持久；Windows 无
+# OS 沙箱限制。`bashPath` 可选（缺省按 Git 安装根推断）。
+- id: custom-bash
+  name: ./custom-bash.mjs
+  disabled: !!js process.platform !== 'win32'
+
 # ── filesystem ──────────────────────────────────────────────────────────────
+
+# Phase-1 编辑器（同梁神 V2）：顶层直排，复用宿主沙箱 ctx.fs 而非裸本地
+# 文件系统，schema 与官方 Minimal `str_replace_editor` 一致。
+- id: str-replace-editor
+  name: '@deepseek-ai/dsh-tool-str-replace-editor'
+  config:
+    maxOutputChars: 16000
 
 # 两者都注册进宿主 tools 注册表且不提供服务，无需 realm；fs 服务与其策略留在宿主。
 - id: tool-fs
@@ -90,10 +155,15 @@
 
 # ── goals ───────────────────────────────────────────────────────────────────
 
-# 只放模型可见的工具。goal 服务、会话驱动与 /goal 命令留在宿主平面：
-# Gateway 以 Remote endpoint 服务 goal 域，接收方来自生成描述符，条目本地
-# realm 会隐藏它。注册表本就按会话键控，一个宿主实例服务所有会话；预设
-# 只决定其 agent 能否调用 goal 工具。
+# goal 服务与会话驱动留在宿主平面，Gateway 在那里解析它们。人机命令与
+# 模型可见工具注册进本预设的 scope 层。
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
+# 只放模型可见的工具。goal 服务与会话驱动留在宿主平面：Gateway 以 Remote
+# endpoint 服务 goal 域，接收方来自生成描述符，条目本地 realm 会隐藏它。
+# 注册表本就按会话键控，一个宿主实例服务所有会话；预设只决定其 agent
+# 能否调用 goal 工具。
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
 
@@ -182,6 +252,7 @@
       config:
         provider: spawn
         toolName: subagent
+        modelSelectionSettings: true
         backgroundMode: continuable
 
     - id: tool-subagent-fork

@@ -16,7 +16,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dispatchLabel } from '../lib/core/pure.mjs';
-import { syncOnePreset, hashTree, pruneExtras, SIDECAR_NAME, ARCHIVE_PREFIX } from '../lib/core/presets-sync.mjs';
+import { syncOnePreset, syncBundledPresets, bundledPresetsRoot, hashTree, pruneExtras, SIDECAR_NAME, ARCHIVE_PREFIX } from '../lib/core/presets-sync.mjs';
 import { createFakeCtx, makeIsolatedDshHome } from './harness/ctx.mjs';
 
 const mod = await import('../index.mjs');
@@ -251,4 +251,69 @@ test('hashTree：sidecar/档案不计入内容哈希（不自指）', () => {
     writeTree(f.target, { 'a.yml': '1\n', [SIDECAR_NAME]: '{"version":1,"bundledHash":"x","targetHash":"y"}' });
     assert.equal(hashTree(f.target), before, 'sidecar 不影响内容哈希');
   } finally { f.cleanup(); }
+});
+
+// ---- presets-sync：bundled orchestrator-v2 自装 + 旧 orchestrator 收编归档 ---------
+
+test('presets-sync：空发现根 → 自装 orchestrator-v2（与 bundled 字节一致 + sidecar）', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-bundled-sync-'));
+  try {
+    const target = join(root, '.agent-presets');
+    const result = syncBundledPresets(target);
+    assert.ok(result.synced.includes('orchestrator-v2'), '空根自装 orchestrator-v2');
+    assert.equal(result.failed.length, 0, '同步无失败');
+    const sourceDir = join(bundledPresetsRoot(), 'orchestrator-v2');
+    const targetDir = join(target, 'orchestrator-v2');
+    assert.equal(hashTree(targetDir), hashTree(sourceDir), '派生树与 bundled 内容哈希一致（hash 校验）');
+    assert.ok(existsSync(join(targetDir, SIDECAR_NAME)), 'sidecar 已写入');
+    for (const entry of readdirSync(sourceDir)) {
+      assert.ok(readFileSync(join(targetDir, entry)).equals(readFileSync(join(sourceDir, entry))), `${entry} 字节一致`);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('presets-sync：orchestrator-v2 同内容二次同步 → current 跳过（不重写文件）', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-bundled-sync-'));
+  try {
+    const target = join(root, '.agent-presets');
+    assert.ok(syncBundledPresets(target).synced.includes('orchestrator-v2'));
+    const probe = join(target, 'orchestrator-v2', 'preset.yml');
+    const mtime = statSync(probe).mtimeMs;
+    const second = syncBundledPresets(target);
+    assert.ok(second.current.includes('orchestrator-v2'), '同内容 → current（跳过写入）');
+    assert.equal(statSync(probe).mtimeMs, mtime, '二次同步不重写文件（mtime 不变）');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('presets-sync：用户改过的 orchestrator-v2 → user-modified 跳过（不覆盖）', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-bundled-sync-'));
+  try {
+    const target = join(root, '.agent-presets');
+    assert.ok(syncBundledPresets(target).synced.includes('orchestrator-v2'));
+    writeFileSync(join(target, 'orchestrator-v2', 'preset.yml'), 'name: 用户自改\n', 'utf8');
+    const second = syncBundledPresets(target);
+    assert.ok(second.userModified.includes('orchestrator-v2'), '用户改动 → user-modified 跳过');
+    assert.equal(readFileSync(join(target, 'orchestrator-v2', 'preset.yml'), 'utf8'), 'name: 用户自改\n', '用户内容未被覆盖');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('presets-sync：旧 orchestrator 目录在 → 改名归档 orchestrator.removed-<stamp>（幂等、内容保留）', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh-bundled-sync-'));
+  try {
+    const target = join(root, '.agent-presets');
+    const legacy = join(target, 'orchestrator');
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, 'preset.yml'), 'name: 编排者模式（旧）\n', 'utf8');
+    const first = syncBundledPresets(target);
+    assert.ok(first.archived.includes('orchestrator'), '旧目录被改名归档（结果含 archived）');
+    assert.ok(!existsSync(legacy), '旧 orchestrator 目录名不再存在');
+    const archives = () => readdirSync(target).filter((e) => e.startsWith('orchestrator.removed-'));
+    assert.equal(archives().length, 1, '恰好一个 orchestrator.removed-<stamp> 归档');
+    assert.equal(readFileSync(join(target, archives()[0], 'preset.yml'), 'utf8'), 'name: 编排者模式（旧）\n', '归档保留用户数据（只改名不删除）');
+    // 幂等：再次同步不产生第二个归档；orchestrator-v2 走 current。
+    const second = syncBundledPresets(target);
+    assert.deepEqual(second.archived, [], '二次同步无归档（幂等）');
+    assert.ok(second.current.includes('orchestrator-v2'), 'orchestrator-v2 二次同步 current');
+    assert.equal(archives().length, 1, '归档数不变');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
