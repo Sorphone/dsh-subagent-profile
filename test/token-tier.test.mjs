@@ -59,7 +59,7 @@ test('TIER_ORDER / tierSortKey: cheap→balanced→premium 权重，未知 tier 
 test('dispatch:profiles 目录行按 tier cheap→balanced→premium 排序', async () => {
   const iso = makeIsolatedDshHome();
   try {
-    const { ctx, records } = createFakeCtx({ services: { agentPresets: { composedPreset: () => 'orchestrator' } } });
+    const { ctx, records } = createFakeCtx({ services: { agentPresets: { composedPreset: () => 'orchestrator-v2' } } });
     await mod.apply(ctx);
     // 注册一个 premium profile 覆盖三分档排序（register 不经 sanitize，原样入 store）。
     const service = records.provides.find((p) => p.name === 'subagent-profiles')?.service;
